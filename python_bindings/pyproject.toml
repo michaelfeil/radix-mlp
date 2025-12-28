@@ -26,10 +26,12 @@ classifiers = [
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "numpy>=1",
+]
 
 [project.optional-dependencies]
 dev = [
-    "numpy>=1",
     "pytest>=7",
 ]
 

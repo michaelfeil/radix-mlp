@@ -1,2 +1,4 @@
 .venv
 *.pyc
+*.abi3.so
+python_bindings/radix_mlp/_core.abi3.so
