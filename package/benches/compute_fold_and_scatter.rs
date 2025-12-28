@@ -46,7 +46,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
     let mut group = c.benchmark_group("compute_fold_and_scatter");
 
     // Benchmark different batch sizes with fixed sequence length
-    for batch_size in [4, 8, 16, 32, 64, 256].iter() {
+    for batch_size in [4, 8, 16, 32, 64, 256, 2048].iter() {
         let seq_len = 512;
         let (input_ids, position_ids, cu_seq_lengths) =
             generate_test_data(*batch_size, seq_len, 0.25);

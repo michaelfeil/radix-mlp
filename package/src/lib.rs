@@ -141,34 +141,37 @@ pub fn compute_fold_and_scatter(
 
             // immutable lookup - as num of children on avg is small, linear search is faster than a HashMap
             // and allows append to end without shifting.
-            let lookup_result = nodes[parent]
-                .children
-                .iter()
-                .find(|&&(key, _)| key == k)
-                .map(|&(_, idx)| idx);
-
-            let child_idx = match lookup_result {
-                Some(idx) => idx, // Node already exists
-                None => {
-                    // Create new node
-                    let idx = nodes.len();
-                    nodes.push(Node {
-                        compact: next_compact, // assign compact immediately
-                        children: Vec::with_capacity(1),
-                    });
-
-                    // Append to end (O(1), no shifting!)
-                    nodes[parent].children.push((k, idx));
-
-                    // Record compact stream + first occurrence position
-                    compact_input_ids.push(t);
-                    compact_position_ids.push(p);
-                    fold_gather.push(i as u32);
-
-                    next_compact += 1;
-                    idx
+            // Manual loop for better performance than iterator-based find()
+            let mut child_idx = 0usize;
+            let mut found = false;
+            let children = &nodes[parent].children;
+            for j in 0..children.len() {
+                if children[j].0 == k {
+                    child_idx = children[j].1;
+                    found = true;
+                    break;
                 }
-            };
+            }
+
+            if !found {
+                // Create new node
+                let idx = nodes.len();
+                nodes.push(Node {
+                    compact: next_compact, // assign compact immediately
+                    children: Vec::with_capacity(1),
+                });
+
+                // Append to end (O(1), no shifting!)
+                nodes[parent].children.push((k, idx));
+
+                // Record compact stream + first occurrence position
+                compact_input_ids.push(t);
+                compact_position_ids.push(p);
+                fold_gather.push(i as u32);
+
+                next_compact += 1;
+                child_idx = idx;
+            }
 
             // scatter: original position -> compact index
             scatter_indices.push(nodes[child_idx].compact);
