@@ -76,6 +76,8 @@ pub fn compute_fold_and_scatter(
         ((pos as u64) << 32) | (token as u64)
     }
 
+    const LINEAR_SEARCH_THRESHOLD: usize = 3;
+
     // Pad to a multiple of 8 or 64 for performance if requested.
     #[inline]
     fn pad_to_multiple(
@@ -116,7 +118,7 @@ pub fn compute_fold_and_scatter(
     let mut nodes: Vec<Node> = Vec::with_capacity(n + 1);
     nodes.push(Node {
         compact: u32::MAX,
-        children: Vec::new(),
+        children: Vec::with_capacity(8),
     });
 
     // Outputs (pre-reserve generously to avoid reallocs)
@@ -139,34 +141,43 @@ pub fn compute_fold_and_scatter(
             let k = make_key(t, p);
 
             // immutable lookup to find child or insertion point
-            let (exists, val) = {
-                let children = &nodes[parent].children;
-                match children.binary_search_by_key(&k, |&(key, _)| key) {
-                    Ok(pos) => (true, children[pos].1),
-                    Err(pos) => (false, pos),
-                }
+            let lookup_result = if nodes[parent].children.len() <= LINEAR_SEARCH_THRESHOLD {
+                // Linear search for small lists (faster due to no branching overhead)
+                nodes[parent].children
+                    .iter()
+                    .find(|&&(key, _)| key == k)
+                    .map(|&(_, idx)| idx)
+            } else {
+                // Binary search for larger lists
+                nodes[parent].children
+                    .binary_search_by_key(&k, |&(key, _)| key)
+                    .ok()
             };
 
-            let child_idx = if exists {
-                val
-            } else {
-                // create new node
-                let insert_pos = val;
-                let idx = nodes.len();
-                nodes.push(Node {
-                    compact: next_compact, // assign compact immediately
-                    children: Vec::new(),
-                });
-                // insert into parent's sorted children
-                nodes[parent].children.insert(insert_pos, (k, idx));
+            let child_idx = match lookup_result {
+                Some(idx) => idx, // Node already exists
+                None => {
+                    // Create new node
+                    let idx = nodes.len();
+                    nodes.push(Node {
+                        compact: next_compact, // assign compact immediately
+                        children: Vec::with_capacity(1),
+                    });
 
-                // record compact stream + first occurrence position
-                compact_input_ids.push(t);
-                compact_position_ids.push(p);
-                fold_gather.push(i as u32);
+                    // Insert into parent's sorted children
+                    let insert_pos = nodes[parent].children
+                        .binary_search_by_key(&k, |&(key, _)| key)
+                        .unwrap_err();
+                    nodes[parent].children.insert(insert_pos, (k, idx));
 
-                next_compact += 1;
-                idx
+                    // Record compact stream + first occurrence position
+                    compact_input_ids.push(t);
+                    compact_position_ids.push(p);
+                    fold_gather.push(i as u32);
+
+                    next_compact += 1;
+                    idx
+                }
             };
 
             // scatter: original position -> compact index
