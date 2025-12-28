@@ -2,6 +2,12 @@
 name = "radix_mlp"
 version = "0.0.1-rc0"
 edition = "2021"
+description = "RadixMLP: Prefix-based computation sharing for transformer models"
+license = "MIT"
+repository = "https://github.com/michaelfeil/radix-mlp"
+homepage = "https://github.com/michaelfeil/radix-mlp"
+keywords = ["transformers", "optimization", "radix", "mlp", "prefix-sharing"]
+categories = ["algorithms", "data-structures", "science"]
 
 [lib]
 name = "radix_mlp"

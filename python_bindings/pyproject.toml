@@ -13,6 +13,8 @@ authors = [
     {name = "Michael Feil", email = "no-reply@michaelfeil.eu"}
 ]
 keywords = ["transformers", "optimization", "radix", "mlp"]
+repository = "https://github.com/michaelfeil/radix-mlp"
+homepage = "https://github.com/michaelfeil/radix-mlp"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -31,9 +33,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-torch = [
-    "torch>=2.0",
-]
 dev = [
     "pytest>=7",
     "torch>=2.0",
