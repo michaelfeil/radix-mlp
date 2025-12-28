@@ -79,7 +79,7 @@ def embed_passages(
     # Prepare request preference
     preference = RequestProcessingPreference(
         batch_size=batch_size,
-        max_concurrent_requests=256,
+        max_concurrent_requests=32,
         timeout_s=600.0,
     )
     try:
