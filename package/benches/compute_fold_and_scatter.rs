@@ -60,7 +60,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                         black_box(&input_ids),
                         black_box(&position_ids),
                         black_box(&cu_seq_lengths),
-                        black_box(false),
+                        black_box(None),
                     )
                 })
             },
@@ -82,7 +82,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                         black_box(&input_ids),
                         black_box(&position_ids),
                         black_box(&cu_seq_lengths),
-                        black_box(false),
+                        black_box(None),
                     )
                 })
             },
@@ -105,14 +105,14 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                         black_box(&input_ids),
                         black_box(&position_ids),
                         black_box(&cu_seq_lengths),
-                        black_box(false),
+                        black_box(None),
                     )
                 })
             },
         );
     }
 
-    // Benchmark with padding enabled
+// Benchmark with padding enabled
     for seq_len in [128, 512, 1024, 4096, 16384, 131072].iter() {
         let batch_size = 32;
         let (input_ids, position_ids, cu_seq_lengths) =
@@ -127,7 +127,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                         black_box(&input_ids),
                         black_box(&position_ids),
                         black_box(&cu_seq_lengths),
-                        black_box(true),
+                        black_box(Some(8)),
                     )
                 })
             },
@@ -146,7 +146,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                 black_box(&input_ids),
                 black_box(&position_ids),
                 black_box(&cu_seq_lengths),
-                black_box(false),
+                black_box(None),
             )
         })
     });
@@ -162,7 +162,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                 black_box(&input_ids),
                 black_box(&position_ids),
                 black_box(&cu_seq_lengths),
-                black_box(false),
+                black_box(None),
             )
         })
     });
@@ -191,7 +191,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                 black_box(&input_ids),
                 black_box(&position_ids),
                 black_box(&cu_seq_lengths),
-                black_box(false),
+                black_box(None),
             )
         })
     });
@@ -220,7 +220,7 @@ fn bench_compute_fold_and_scatter(c: &mut Criterion) {
                 black_box(&input_ids),
                 black_box(&position_ids),
                 black_box(&cu_seq_lengths),
-                black_box(false),
+                black_box(None),
             )
         })
     });

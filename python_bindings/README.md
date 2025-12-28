@@ -77,7 +77,7 @@ Computes indices for RadixMLP-style folding and scattering.
 - `input_ids` (np.ndarray[np.uint32]): Flattened token IDs
 - `position_ids` (np.ndarray[np.uint32]): Flattened position IDs
 - `cu_seq_lengths` (np.ndarray[np.uint32]): Cumulative sequence lengths
-- `pad_multiple_of` (bool): Pad output for performance (default: False)
+- `pad_multiple_of` (Optional[int]): If `Some(n)`, pad output to multiple of `n` for performance. If `None`, no padding (default: None)
 
 **Returns:**
 - `compact_input_ids`: Unique token IDs

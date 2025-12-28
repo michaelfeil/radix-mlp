@@ -116,3 +116,22 @@ def test_version_attribute():
     from radix_mlp import __version__
 
     assert __version__.count(".") == 2  # Simple check for semantic versioning format
+
+
+def test_custom_padding():
+    """Test custom padding values."""
+    input_ids = np.array([1, 2, 3, 1, 2, 4], dtype=np.uint32)
+    position_ids = np.array([0, 1, 2, 0, 1, 2], dtype=np.uint32)
+    cu_seq_lengths = np.array([0, 3, 6], dtype=np.uint32)
+
+    # Test with custom padding (16)
+    compact_ids, _, _, _ = compute_fold_and_scatter(
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=16
+    )
+    assert len(compact_ids) == 16, "Should be padded to 16"
+
+    # Test with None (no padding)
+    compact_ids_no_pad, _, _, _ = compute_fold_and_scatter(
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=None
+    )
+    assert len(compact_ids_no_pad) == 4, "Should not be padded"

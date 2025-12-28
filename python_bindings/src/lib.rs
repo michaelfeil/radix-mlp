@@ -9,7 +9,7 @@ fn compute_fold_and_scatter(
     input_ids: &Bound<PyArray1<u32>>,
     position_ids: &Bound<PyArray1<u32>>,
     cu_seq_lengths: &Bound<PyArray1<u32>>,
-    pad_multiple_of: bool,
+    pad_multiple_of: Option<usize>,
 ) -> PyResult<(
     Py<PyArray1<u32>>,
     Py<PyArray1<u32>>,

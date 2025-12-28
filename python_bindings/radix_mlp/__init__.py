@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import NDArray
-from typing import Tuple
+from typing import Tuple, Optional
 
 # Import the Rust extension
 try:
@@ -25,7 +25,7 @@ def compute_fold_and_scatter(
     input_ids: NDArray[np.uint32],
     position_ids: NDArray[np.uint32],
     cu_seq_lengths: NDArray[np.uint32],
-    pad_multiple_of: bool = False,
+    pad_multiple_of: Optional[int] = None,
 ) -> Tuple[NDArray[np.uint32], NDArray[np.uint32], NDArray[np.uint32], NDArray[np.uint32]]:
     """
     Compute indices for RadixMLP-style folding and scattering.
@@ -37,7 +37,8 @@ def compute_fold_and_scatter(
         input_ids: Flattened array of token IDs for all sequences.
         position_ids: Flattened array of position IDs corresponding to each token.
         cu_seq_lengths: Cumulative sequence lengths, e.g., [0, len_seq1, len_seq1+len_seq2, ...].
-        pad_multiple_of: If True, pad output to multiple of 8 (small) or 64 (large) for performance.
+        pad_multiple_of: If Some(n), pad output to multiple of n for performance.
+            If None, no padding is applied.
 
     Returns:
         A tuple of four numpy arrays:

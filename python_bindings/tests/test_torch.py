@@ -232,8 +232,27 @@ def test_torch_with_padding():
     cu_seq_lengths = torch.tensor([0, 3, 6], dtype=torch.int32)
 
     compact_ids, _, _, _ = compute_fold_and_scatter_torch(
-        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=True
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=8
     )
 
     # Should be padded to multiple of 8
     assert len(compact_ids) % 8 == 0 or len(compact_ids) == 0
+
+
+def test_torch_custom_padding():
+    """Test custom padding values."""
+    input_ids = torch.tensor([1, 2, 3, 1, 2, 4], dtype=torch.int32)
+    position_ids = torch.tensor([0, 1, 2, 0, 1, 2], dtype=torch.int32)
+    cu_seq_lengths = torch.tensor([0, 3, 6], dtype=torch.int32)
+
+    # Test with custom padding (16)
+    compact_ids, _, _, _ = compute_fold_and_scatter_torch(
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=16
+    )
+    assert len(compact_ids) == 16, "Should be padded to 16"
+
+    # Test with None (no padding)
+    compact_ids_no_pad, _, _, _ = compute_fold_and_scatter_torch(
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of=None
+    )
+    assert len(compact_ids_no_pad) == 4, "Should not be padded"

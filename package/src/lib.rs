@@ -21,8 +21,8 @@
 /// * `position_ids`: A flattened vector of position IDs corresponding to each token in `input_ids`.
 /// * `cu_seq_lengths`: Cumulative sequence lengths, e.g., `[0, len_seq1, len_seq1 + len_seq2, ...]`.
 ///   This defines the boundaries of each sequence in the flattened `input_ids` and `position_ids`.
-/// * `pad_multiple_of`: If `true`, the output compact vectors are padded to a multiple of 8 (for
-///   small tensors) or 64 (for larger ones) to improve performance on certain hardware (e.g., cuBLAS).
+/// * `pad_multiple_of`: If `Some(n)`, the output compact vectors are padded to a multiple of `n`
+///   to improve performance on certain hardware (e.g., cuBLAS). If `None`, no padding is applied.
 ///
 /// # Returns
 ///
@@ -42,7 +42,7 @@ pub fn compute_fold_and_scatter(
     input_ids: &[u32],
     position_ids: &[u32],
     cu_seq_lengths: &[u32],
-    pad_multiple_of: bool,
+    pad_multiple_of: Option<usize>,
 ) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
     // Empty fast-path
     if input_ids.is_empty() {
@@ -56,11 +56,12 @@ pub fn compute_fold_and_scatter(
         let mut fold_gather: Vec<u32> = (0..input_ids.len() as u32).collect();
         let scatter_indices = fold_gather.clone();
 
-        if pad_multiple_of {
+        if let Some(multiple) = pad_multiple_of {
             pad_to_multiple(
                 &mut compact_input_ids,
                 &mut compact_position_ids,
                 &mut fold_gather,
+                multiple,
             );
         }
 
@@ -77,19 +78,19 @@ pub fn compute_fold_and_scatter(
         ((pos as u64) << 32) | (token as u64)
     }
 
-    // Pad to a multiple of 8 or 64 for performance if requested.
+    // Pad to a multiple of the specified value for performance if requested.
     #[inline]
     fn pad_to_multiple(
         compact_input_ids: &mut Vec<u32>,
         compact_position_ids: &mut Vec<u32>,
         fold_gather: &mut Vec<u32>,
+        multiple: usize,
     ) {
         let current_len = compact_input_ids.len();
         if current_len == 0 {
             return;
         }
 
-        let multiple = if current_len < 4096 { 8 } else { 64 };
         let remainder = current_len % multiple;
 
         if remainder != 0 {
@@ -183,12 +184,13 @@ pub fn compute_fold_and_scatter(
     // If no reduction happened, the streams equal identity (creation order == input order).
     // That already satisfies your tests, so just return what we built.
 
-    // Pad to a multiple of 8 for cublas performance if requested.
-    if pad_multiple_of {
+    // Pad to a multiple of the specified value for cublas performance if requested.
+    if let Some(multiple) = pad_multiple_of {
         pad_to_multiple(
             &mut compact_input_ids,
             &mut compact_position_ids,
             &mut fold_gather,
+            multiple,
         );
     }
 
@@ -211,7 +213,7 @@ mod tests {
         let cu_seq_lengths: Vec<u32> = vec![];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         assert_eq!(compact_input_ids, vec![] as Vec<u32>);
         assert_eq!(compact_position_ids, vec![] as Vec<u32>);
@@ -227,7 +229,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // No deduplication possible with single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
@@ -251,7 +253,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 7, 10, 15];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should deduplicate shared prefix [a,b,c] at positions [0,1,2]
         // and shared subsequence [e,f,g] at positions [3,4,5]
@@ -276,7 +278,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3, 6];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should completely deduplicate to single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
@@ -295,7 +297,7 @@ mod tests {
         let cu = vec![0, 4, 8];
 
         let (compact_ids, compact_pos, scatter, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu, None);
 
         // For each compact index, compute the minimal original position that maps to it.
         let mut mins = vec![u32::MAX; compact_ids.len()];
@@ -321,7 +323,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 2, 4];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // No deduplication possible
         assert_eq!(compact_input_ids, vec![1, 2, 3, 4]);
@@ -338,7 +340,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3, 6];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should deduplicate shared prefix [a,b] at positions [0,1]
         assert_eq!(compact_input_ids.len(), 4); // [a,b,c,d] in some order
@@ -362,7 +364,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 2, 4];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should NOT deduplicate because positions are different
         assert_eq!(compact_input_ids.len(), 4);
@@ -382,7 +384,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 4, 8, 12];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should deduplicate:
         // - [a,b] at [0,1] shared by all three
@@ -407,7 +409,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 1, 2, 3];
 
         let (compact_input_ids, _compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         // Should deduplicate token 1 at position 0
         assert_eq!(compact_input_ids.len(), 2); // [1, 2]
@@ -422,8 +424,8 @@ mod tests {
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
 
-        let result1 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
-        let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+        let result1 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
+        let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
         assert_eq!(result1, result2);
     }
@@ -435,7 +437,7 @@ mod tests {
         let position_ids_1 = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths_1 = vec![0, 3, 6];
         let (compact_ids_1, _, _, _) =
-            compute_fold_and_scatter(&input_ids_1, &position_ids_1, &cu_seq_lengths_1, true);
+            compute_fold_and_scatter(&input_ids_1, &position_ids_1, &cu_seq_lengths_1, Some(8));
         assert_eq!(compact_ids_1.len(), 8, "Should pad from 4 to 8");
 
         // Test case 2: Compact size < 1024, already a multiple of 8
@@ -443,7 +445,7 @@ mod tests {
         let position_ids_2 = (0..8).collect::<Vec<u32>>();
         let cu_seq_lengths_2 = vec![0, 8];
         let (compact_ids_2, _, _, _) =
-            compute_fold_and_scatter(&input_ids_2, &position_ids_2, &cu_seq_lengths_2, true);
+            compute_fold_and_scatter(&input_ids_2, &position_ids_2, &cu_seq_lengths_2, Some(8));
         assert_eq!(
             compact_ids_2.len(),
             8,
@@ -456,7 +458,7 @@ mod tests {
         let position_ids_3 = (0..n).collect::<Vec<u32>>();
         let cu_seq_lengths_3 = vec![0, n];
         let (compact_ids_3, _, _, _) =
-            compute_fold_and_scatter(&input_ids_3, &position_ids_3, &cu_seq_lengths_3, true);
+            compute_fold_and_scatter(&input_ids_3, &position_ids_3, &cu_seq_lengths_3, Some(64));
         assert_eq!(compact_ids_3.len(), 2048, "Should pad from 2047 to 2048");
 
         // Test case 4: Compact size > 1024, already a multiple of 64
@@ -465,7 +467,7 @@ mod tests {
         let position_ids_4 = (0..n).collect::<Vec<u32>>();
         let cu_seq_lengths_4 = vec![0, n];
         let (compact_ids_4, _, _, _) =
-            compute_fold_and_scatter(&input_ids_4, &position_ids_4, &cu_seq_lengths_4, true);
+            compute_fold_and_scatter(&input_ids_4, &position_ids_4, &cu_seq_lengths_4, Some(64));
         assert_eq!(
             compact_ids_4.len(),
             1024,
@@ -481,7 +483,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3, 6];
 
         let (compact_input_ids, compact_position_ids, _scatter, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, true);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, Some(8));
 
         assert_eq!(compact_input_ids.len(), 8, "Should be padded to 8");
         assert_eq!(compact_position_ids.len(), 8, "Should be padded to 8");
@@ -503,9 +505,31 @@ mod tests {
             &input_ids_no_pad,
             &position_ids_no_pad,
             &cu_seq_lengths_no_pad,
-            true,
+            Some(8),
         );
         assert_eq!(compact_ids_no_pad.len(), 8, "Should not be padded");
+    }
+
+    #[test]
+    fn test_padding_custom_multiple() {
+        // Test custom padding value (e.g., 16)
+        let input_ids = vec![1, 2, 3, 1, 2, 4]; // compact: [1,2,3,4]
+        let position_ids = vec![0, 1, 2, 0, 1, 2];
+        let cu_seq_lengths = vec![0, 3, 6];
+
+        let (compact_input_ids, _, _, _) =
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, Some(16));
+
+        assert_eq!(compact_input_ids.len(), 16, "Should be padded to 16");
+        assert_eq!(&compact_input_ids[0..4], &[1, 2, 3, 4]);
+        assert_eq!(&compact_input_ids[4..16], &[0; 12]);
+
+        // Test with None (no padding)
+        let (compact_input_ids_no_pad, _, _, _) =
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
+
+        assert_eq!(compact_input_ids_no_pad.len(), 4, "Should not be padded");
+        assert_eq!(compact_input_ids_no_pad, &[1, 2, 3, 4]);
     }
 
     // Helper functions for simulation
@@ -569,7 +593,7 @@ mod tests {
         input_ids: &[u32],
         position_ids: &[u32],
         cu_seq_lengths: &[u32],
-        pad_multiple_of_8: bool,
+        pad_multiple_of: Option<usize>,
     ) -> RadixMLPTestResult {
         // Baseline computation pipeline
         let embeddings = apply_positional_embeddings(input_ids, position_ids);
@@ -578,7 +602,7 @@ mod tests {
 
         // RadixMLP computation pipeline
         let (compact_input_ids, compact_position_ids, scatter_indices, _fold_gather) =
-            compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths, pad_multiple_of_8);
+            compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths, pad_multiple_of);
 
         let compact_embeddings =
             apply_positional_embeddings(&compact_input_ids, &compact_position_ids);
@@ -634,7 +658,7 @@ mod tests {
         result: &RadixMLPTestResult,
         test_name: &str,
         expected_compression: bool,
-        pad_multiple_of_8: bool,
+        pad_multiple_of: Option<usize>,
     ) {
         if expected_compression {
             // When padding is enabled, we might not strictly achieve compression
@@ -642,8 +666,8 @@ mod tests {
             // But generally for these tests we construct cases where deduplication is significant.
             // We can relax this check or make it context aware, but for now let's keep it simple.
             // NOTE: logic kept as is, might fail if padding > savings.
-            let addition = if pad_multiple_of_8 {
-                8 - (result.compact_tokens % 8)
+            let addition = if let Some(multiple) = pad_multiple_of {
+                multiple - (result.compact_tokens % multiple)
             } else {
                 0
             };
@@ -654,7 +678,7 @@ mod tests {
                 result.original_tokens,
                 result.compact_tokens
             );
-        } else if pad_multiple_of_8 {
+        } else if pad_multiple_of.is_some() {
             // With padding, we might not achieve compression if the compact size is already a multiple of 8.
             assert!(
                 result.compact_tokens >= result.original_tokens,
@@ -682,7 +706,7 @@ mod tests {
         cu_seq_lengths: Vec<u32>,
         expect_compression: bool,
         expected_compression_ratio: Option<f32>, // None means don't check specific ratio
-        pad_multiple_of_8: bool,
+        pad_multiple_of: Option<usize>,
     }
 
     // ...existing basic tests...
@@ -696,7 +720,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 3, 6],
                 expect_compression: true,
                 expected_compression_ratio: Some(0.5), // 6 -> 3 tokens
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "identical_sequences_padded",
@@ -705,7 +729,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 3, 6],
                 expect_compression: false, // 6 -> 3 -> padded to 8. 8 > 6. So strictly no compression in terms of count.
                 expected_compression_ratio: None,
-                pad_multiple_of_8: true,
+                pad_multiple_of: Some(8),
             },
             TestCase {
                 name: "shared_prefix",
@@ -714,7 +738,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 3, 6],
                 expect_compression: true,
                 expected_compression_ratio: Some(4.0 / 6.0), // 6 -> 4 tokens
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "shared_prefix_padded",
@@ -723,7 +747,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 3, 6],
                 expect_compression: false, // 6 -> 4 -> padded to 8.
                 expected_compression_ratio: None,
-                pad_multiple_of_8: true,
+                pad_multiple_of: Some(8),
             },
             TestCase {
                 name: "no_overlap",
@@ -732,7 +756,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 3, 6],
                 expect_compression: false,
                 expected_compression_ratio: Some(1.0),
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "complex_three_sequences",
@@ -741,7 +765,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 4, 8, 12],
                 expect_compression: true,
                 expected_compression_ratio: None, // Don't check specific ratio
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "complex_three_sequences_padded",
@@ -751,7 +775,7 @@ mod tests {
                 expect_compression: true, // 12 -> something < 12. If small enough, even with padding it's < 12.
                 // Actual unique: [1,2,3,4,5,6,7] -> 7 unique tokens. Padded to 8. 8 < 12.
                 expected_compression_ratio: None,
-                pad_multiple_of_8: true,
+                pad_multiple_of: Some(8),
             },
             TestCase {
                 name: "single_tokens",
@@ -760,7 +784,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 1, 2, 3],
                 expect_compression: true,
                 expected_compression_ratio: Some(2.0 / 3.0), // 3 -> 2 tokens
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "different_positions",
@@ -769,7 +793,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 2, 4],
                 expect_compression: false,
                 expected_compression_ratio: Some(1.0),
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
         ];
 
@@ -778,7 +802,7 @@ mod tests {
                 &test_case.input_ids,
                 &test_case.position_ids,
                 &test_case.cu_seq_lengths,
-                test_case.pad_multiple_of_8,
+                test_case.pad_multiple_of,
             );
 
             // Assert outputs are numerically identical
@@ -789,7 +813,7 @@ mod tests {
                 &result,
                 test_case.name,
                 test_case.expect_compression,
-                test_case.pad_multiple_of_8,
+                test_case.pad_multiple_of,
             );
 
             // Assert specific compression ratio if provided
@@ -823,7 +847,7 @@ mod tests {
                 cu_seq_lengths: vec![],
                 expect_compression: false,
                 expected_compression_ratio: None,
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "single_token_single_sequence",
@@ -832,7 +856,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 1],
                 expect_compression: false,
                 expected_compression_ratio: Some(1.0),
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "single_token_single_sequence_padded",
@@ -841,7 +865,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 1],
                 expect_compression: false,
                 expected_compression_ratio: None,
-                pad_multiple_of_8: true,
+                pad_multiple_of: Some(8),
             },
             TestCase {
                 name: "long_identical_sequences",
@@ -850,7 +874,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 5, 10, 15],
                 expect_compression: true,
                 expected_compression_ratio: Some(1.0 / 3.0),
-                pad_multiple_of_8: false,
+                pad_multiple_of: None,
             },
             TestCase {
                 name: "long_identical_sequences_with_padding",
@@ -859,7 +883,7 @@ mod tests {
                 cu_seq_lengths: vec![0, 5, 10, 15],
                 expect_compression: true,
                 expected_compression_ratio: Some(8.0 / 15.0), // 15 -> 8 (with padding), ratio = 8/15 ~ 0.5333
-                pad_multiple_of_8: true,
+                pad_multiple_of: Some(8),
             },
         ];
 
@@ -870,7 +894,7 @@ mod tests {
                         &test_case.input_ids,
                         &test_case.position_ids,
                         &test_case.cu_seq_lengths,
-                        test_case.pad_multiple_of_8,
+                        test_case.pad_multiple_of,
                     );
                 assert!(compact_input_ids.is_empty());
                 assert!(compact_position_ids.is_empty());
@@ -883,7 +907,7 @@ mod tests {
                 &test_case.input_ids,
                 &test_case.position_ids,
                 &test_case.cu_seq_lengths,
-                test_case.pad_multiple_of_8,
+                test_case.pad_multiple_of,
             );
 
             assert_outputs_equal(&result, test_case.name, 1e-6);
@@ -891,7 +915,7 @@ mod tests {
                 &result,
                 test_case.name,
                 test_case.expect_compression,
-                test_case.pad_multiple_of_8,
+                test_case.pad_multiple_of,
             );
 
             if let Some(expected_ratio) = test_case.expected_compression_ratio {
@@ -944,7 +968,7 @@ mod tests {
 
         let t0 = Instant::now();
         let (compact_ids, _compact_pos, _scatter, _fold) =
-            super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+            super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
         let dt = t0.elapsed();
         let dt_ms = dt.as_secs_f64() * 1000.0;
 

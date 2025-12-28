@@ -7,7 +7,7 @@ RadixMLP implementation, handling device and dtype conversions automatically.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Optional
 
 try:
     import torch
@@ -24,7 +24,7 @@ def compute_fold_and_scatter_torch(
     input_ids: torch.Tensor,
     position_ids: torch.Tensor,
     cu_seq_lengths: torch.Tensor,
-    pad_multiple_of: bool = False,
+    pad_multiple_of: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute indices for RadixMLP-style folding and scattering using PyTorch tensors.
@@ -40,7 +40,8 @@ def compute_fold_and_scatter_torch(
             Can be int32 or int64, on any device.
         cu_seq_lengths: Cumulative sequence lengths, e.g., [0, len_seq1, len_seq1+len_seq2, ...].
             Can be int32 or int64, on any device.
-        pad_multiple_of: If True, pad output to multiple of 8 (small) or 64 (large) for performance.
+        pad_multiple_of: If Some(n), pad output to multiple of n for performance.
+            If None, no padding is applied.
 
     Returns:
         A tuple of four PyTorch tensors on the same device as the inputs:
@@ -107,7 +108,6 @@ def compute_fold_and_scatter_torch(
             f"input_ids and position_ids must have same length: "
             f"{len(input_ids)} != {len(position_ids)}"
         )
-
 
     input_ids_np = input_ids.numpy(force=True).astype(np.uint32)
     position_ids_np = position_ids.numpy(force=True).astype(np.uint32)

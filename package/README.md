@@ -27,7 +27,7 @@ let position_ids = vec![0, 1, 2, 0, 1, 2];
 let cu_seq_lengths = vec![0, 3, 6];
 
 let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-    compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+    compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, None);
 
 println!("Original: {} -> Compact: {}", input_ids.len(), compact_input_ids.len());
 ```
@@ -42,7 +42,7 @@ Computes indices for RadixMLP-style folding and scattering.
 - `input_ids`: Flattened vector of token IDs
 - `position_ids`: Flattened vector of position IDs
 - `cu_seq_lengths`: Cumulative sequence lengths
-- `pad_multiple_of`: Pad output for performance
+- `pad_multiple_of`: If `Some(n)`, pad output to multiple of `n` for performance. If `None`, no padding.
 
 **Returns:**
 - `compact_input_ids`: Unique token IDs
