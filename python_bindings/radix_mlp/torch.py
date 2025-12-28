@@ -11,9 +11,10 @@ from typing import Tuple
 
 try:
     import torch
+    import numpy as np
 except ImportError as e:
     raise ImportError(
-        "PyTorch is required for the torch interface. Install it with: pip install radix-mlp[torch]"
+        "PyTorch+Numpy is required for the torch interface. Install it with: pip install radix-mlp torch numpy"
     ) from e
 
 from radix_mlp import compute_fold_and_scatter as _compute_fold_and_scatter_numpy
@@ -107,9 +108,6 @@ def compute_fold_and_scatter_torch(
             f"{len(input_ids)} != {len(position_ids)}"
         )
 
-    # Convert to numpy using force=True to handle all cases
-    # This is equivalent to: tensor.detach().cpu().resolve_conj().resolve_neg().numpy()
-    import numpy as np
 
     input_ids_np = input_ids.numpy(force=True).astype(np.uint32)
     position_ids_np = position_ids.numpy(force=True).astype(np.uint32)
@@ -125,11 +123,11 @@ def compute_fold_and_scatter_torch(
         input_ids_np, position_ids_np, cu_seq_lengths_np, pad_multiple_of
     )
 
-    # Convert back to torch tensors
-    compact_input_ids = torch.from_numpy(compact_input_ids_np)
-    compact_position_ids = torch.from_numpy(compact_position_ids_np)
-    scatter_indices = torch.from_numpy(scatter_indices_np)
-    fold_gather = torch.from_numpy(fold_gather_np)
+    # Convert back to torch tensors (as int32 for better compatibility)
+    compact_input_ids = torch.from_numpy(compact_input_ids_np).to(torch.int32)
+    compact_position_ids = torch.from_numpy(compact_position_ids_np).to(torch.int32)
+    scatter_indices = torch.from_numpy(scatter_indices_np).to(torch.int32)
+    fold_gather = torch.from_numpy(fold_gather_np).to(torch.int32)
 
     # Move to original device if needed
     if device.type != "cpu":

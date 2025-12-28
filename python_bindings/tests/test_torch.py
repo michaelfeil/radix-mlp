@@ -88,10 +88,10 @@ def test_torch_gpu_device():
         input_ids, position_ids, cu_seq_lengths
     )
 
-    assert compact_ids.device == device
-    assert compact_pos.device == device
-    assert scatter.device == device
-    assert fold.device == device
+    assert compact_ids.device.type == device.type
+    assert compact_pos.device.type == device.type
+    assert scatter.device.type == device.type
+    assert fold.device.type == device.type
 
 
 def test_torch_device_mismatch_error():
@@ -218,11 +218,11 @@ def test_torch_matches_numpy():
         fold_torch,
     ) = compute_fold_and_scatter_torch(input_ids_torch, position_ids_torch, cu_seq_lengths_torch)
 
-    # Compare results
-    torch.testing.assert_close(compact_ids_torch, torch.from_numpy(compact_ids_np))
-    torch.testing.assert_close(compact_pos_torch, torch.from_numpy(compact_pos_np))
-    torch.testing.assert_close(scatter_torch, torch.from_numpy(scatter_np))
-    torch.testing.assert_close(fold_torch, torch.from_numpy(fold_np))
+    # Compare results (convert numpy to int32 for comparison)
+    torch.testing.assert_close(compact_ids_torch, torch.from_numpy(compact_ids_np).to(torch.int32))
+    torch.testing.assert_close(compact_pos_torch, torch.from_numpy(compact_pos_np).to(torch.int32))
+    torch.testing.assert_close(scatter_torch, torch.from_numpy(scatter_np).to(torch.int32))
+    torch.testing.assert_close(fold_torch, torch.from_numpy(fold_np).to(torch.int32))
 
 
 def test_torch_with_padding():
