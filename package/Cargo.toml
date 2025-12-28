@@ -1,6 +1,6 @@
 [package]
 name = "radix_mlp"
-version = "0.0.1-rc0"
+version = "0.0.1"
 edition = "2021"
 description = "RadixMLP: Prefix-based computation sharing for transformer models"
 license = "MIT"

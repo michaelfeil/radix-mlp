@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "radix-mlp-python"
-version = "0.0.1-rc0"
+version = "0.0.1"
 dependencies = [
  "numpy",
  "pyo3",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "radix_mlp"
-version = "0.0.1-rc0"
+version = "0.0.1"
 
 [[package]]
 name = "rawpointer"
