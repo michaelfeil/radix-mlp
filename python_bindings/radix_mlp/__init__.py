@@ -87,3 +87,11 @@ def compute_fold_and_scatter(
 
 
 __all__ = ["compute_fold_and_scatter"]
+
+# Export torch interface if available
+try:
+    from radix_mlp.torch import compute_fold_and_scatter_torch
+
+    __all__.append("compute_fold_and_scatter_torch")
+except ImportError:
+    pass

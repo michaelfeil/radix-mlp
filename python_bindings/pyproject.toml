@@ -31,8 +31,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+torch = [
+    "torch>=2.0",
+]
 dev = [
     "pytest>=7",
+    "torch>=2.0",
 ]
 
 [tool.maturin]
