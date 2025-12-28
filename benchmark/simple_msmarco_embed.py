@@ -18,8 +18,8 @@ from baseten_performance_client import (
 
 
 def load_msmarco_passages(max_samples: int = None) -> List[Dict[str, str]]:
-    """Load MSMARCO passages from IRDS."""
-    print("Loading MSMARCO passages...")
+    """Load MSMARCO query-passage pairs from validation set."""
+    print("Loading MSMARCO query-passage pairs...")
 
     # Load the document corpus using IRDS format
     dataset = load_dataset("microsoft/ms_marco", "v1.1")
@@ -31,16 +31,23 @@ def load_msmarco_passages(max_samples: int = None) -> List[Dict[str, str]]:
         for i, doc in enumerate(entry["passages"]["passage_text"]):
             rerank_documents.append({"text": doc, "query": query})
 
-    print(f"Loaded {len(rerank_documents)} passages from MSMARCO validation set")
+            # Apply max_samples limit if specified
+            if max_samples and len(rerank_documents) >= max_samples:
+                break
+        if max_samples and len(rerank_documents) >= max_samples:
+            break
+
+    print(
+        f"Loaded {len(rerank_documents)} query-passage pairs from MSMARCO validation set"
+    )
     return rerank_documents
-    
 
 
 def apply_qwen3_template(
-    passages: List[str],
+    passage_data: List[Dict[str, str]],
     prefix: str = "embed the following sentences that is part of bing query dataset, with target to help find relevant web documents.",
 ) -> List[str]:
-    """Apply Qwen3 chat template to passages."""
+    """Apply Qwen3 chat template to query-passage pairs."""
     template = """<|im_start|>system
 You are a helpful assistant specialized in embedding text for retrieval tasks.<|im_end|>
 <|im_start|>user
@@ -49,7 +56,7 @@ You are a helpful assistant specialized in embedding text for retrieval tasks.<|
 """
 
     formatted_passages = []
-    for passage in passages:
+    for passage in passage_data:
         formatted = template.format(prefix=passage["query"], passage=passage["text"])
         formatted_passages.append(formatted)
 
@@ -83,8 +90,8 @@ def embed_passages(
             preference=preference,
         )
 
-        print(f"Successfully embedded {len(response.data)} passages")
-        return response.data
+        print(f"Successfully embedded {len(passages)} passages in {response.total_time:.2f} seconds")
+        return response
 
     except Exception as e:
         print(f"Error embedding passages: {e}")
@@ -105,7 +112,7 @@ def main():
     parser.add_argument("--api-key", help="API key for authentication")
     parser.add_argument("--model", default="qwen3", help="Model name")
     parser.add_argument(
-        "--batch-size", type=int, default=32, help="Batch size for embedding"
+        "--batch-size", type=int, default=128, help="Batch size for embedding"
     )
     parser.add_argument(
         "--output", default="msmarco_embeddings.json", help="Output file"
@@ -115,75 +122,35 @@ def main():
         default="embed the following sentences that is part of bing query dataset, with target to help find relevant web documents.",
         help="Custom prefix",
     )
-    parser.add_argument(
-        "--load-queries",
-        action="store_true",
-        help="Load dev queries instead of passages",
-    )
-
     args = parser.parse_args()
 
-    # Load data
-    if args.load_queries:
-        # Load dev queries
-        queries = load_dev_queries()
-        if not queries:
-            print("No queries loaded. Exiting.")
-            return
-
-        data = queries
-        data_type = "queries"
-        print(f"Loaded {len(queries)} dev queries")
-    else:
-        # Load passages
-        passages = load_msmarco_passages(args.max_samples)
-        if not passages:
-            print("No passages loaded. Exiting.")
-            return
-
-        data = passages
-        data_type = "passages"
+    # Load query-passage pairs
+    passage_data = load_msmarco_passages(args.max_samples)
+    if not passage_data:
+        print("No passage data loaded. Exiting.")
+        return
 
     # Apply Qwen3 template
-    formatted_data = apply_qwen3_template(data, args.prefix)
-    print(f"Applied Qwen3 template to {len(formatted_data)} {data_type}")
+    formatted_passages = apply_qwen3_template(passage_data, args.prefix)
+    print(f"Applied Qwen3 template to {len(formatted_passages)} passages")
 
     # Show example
-    print(f"\nExample formatted {data_type[:-1]}:")
-    print(formatted_data[0][:200] + "...")
+    print(f"\nExample formatted passage:")
+    print(formatted_passages[0][:200] + "...")
 
-    # Embed data
+    # Embed passages
     embeddings = embed_passages(
-        formatted_data,
+        formatted_passages,
         args.base_url,
         args.api_key or "",
         args.model,
         args.batch_size,
     )
+    print("Performance stats:")
+    print(embeddings.total_time)
+    times = embeddings.individual_request_times
+    print(f"Average batch request time: {sum(times) / len(times):.2f} seconds")
 
-    if embeddings:
-        # Save results
-        results = {
-            data_type: data,
-            f"formatted_{data_type}": formatted_data,
-            "embeddings": embeddings,
-            "config": {
-                "max_samples": args.max_samples,
-                "base_url": args.base_url,
-                "model": args.model,
-                "batch_size": args.batch_size,
-                "prefix": args.prefix,
-                "load_queries": args.load_queries,
-            },
-        }
-
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-
-        print(f"Results saved to {args.output}")
-        print(f"Processed {len(data)} {data_type}")
-    else:
-        print("Embedding failed. No results to save.")
 
 
 if __name__ == "__main__":
