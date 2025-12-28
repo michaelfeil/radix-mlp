@@ -25,9 +25,6 @@ on:
         description: "Staging address for the performance client."
         required: false
 
-permissions:
-  contents: read
-
 jobs:
   linux:
     runs-on: ${{ matrix.platform.runner }}
