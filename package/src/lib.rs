@@ -3,6 +3,7 @@
 // Copyright (c) 2025 michaelfeil
 
 /// Computes indices for RadixMLP-style folding and scattering to enable prefix-based computation sharing.
+
 ///
 /// This function identifies shared prefixes among sequences in a batch. For a batch of token
 /// sequences, it produces a "compacted" representation containing only the unique subsequences
@@ -76,8 +77,6 @@ pub fn compute_fold_and_scatter(
         ((pos as u64) << 32) | (token as u64)
     }
 
-    const LINEAR_SEARCH_THRESHOLD: usize = 3;
-
     // Pad to a multiple of 8 or 64 for performance if requested.
     #[inline]
     fn pad_to_multiple(
@@ -109,7 +108,7 @@ pub fn compute_fold_and_scatter(
     #[derive(Debug)]
     struct Node {
         compact: u32,                // u32::MAX => not assigned yet
-        children: Vec<(u64, usize)>, // sorted by key
+        children: Vec<(u64, usize)>, // unsorted - linear search only (faster than insert lookup.)
     }
 
     let n = input_ids.len();
@@ -140,19 +139,13 @@ pub fn compute_fold_and_scatter(
             let p = position_ids[i];
             let k = make_key(t, p);
 
-            // immutable lookup to find child or insertion point
-            let lookup_result = if nodes[parent].children.len() <= LINEAR_SEARCH_THRESHOLD {
-                // Linear search for small lists (faster due to no branching overhead)
-                nodes[parent].children
-                    .iter()
-                    .find(|&&(key, _)| key == k)
-                    .map(|&(_, idx)| idx)
-            } else {
-                // Binary search for larger lists
-                nodes[parent].children
-                    .binary_search_by_key(&k, |&(key, _)| key)
-                    .ok()
-            };
+            // immutable lookup - as num of children on avg is small, linear search is faster than a HashMap
+            // and allows append to end without shifting.
+            let lookup_result = nodes[parent]
+                .children
+                .iter()
+                .find(|&&(key, _)| key == k)
+                .map(|&(_, idx)| idx);
 
             let child_idx = match lookup_result {
                 Some(idx) => idx, // Node already exists
@@ -164,11 +157,8 @@ pub fn compute_fold_and_scatter(
                         children: Vec::with_capacity(1),
                     });
 
-                    // Insert into parent's sorted children
-                    let insert_pos = nodes[parent].children
-                        .binary_search_by_key(&k, |&(key, _)| key)
-                        .unwrap_err();
-                    nodes[parent].children.insert(insert_pos, (k, idx));
+                    // Append to end (O(1), no shifting!)
+                    nodes[parent].children.push((k, idx));
 
                     // Record compact stream + first occurrence position
                     compact_input_ids.push(t);
