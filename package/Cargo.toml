@@ -1,0 +1,17 @@
+[package]
+name = "radix_mlp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "radix_mlp"
+
+[dependencies]
+# Pure Rust library - no Python dependencies
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "compute_fold_and_scatter"
+harness = false
