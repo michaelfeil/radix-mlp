@@ -1,0 +1,2 @@
+baseten_performance_client>=0.1.0
+datasets>=2.12.0
