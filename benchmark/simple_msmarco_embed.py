@@ -45,19 +45,20 @@ def load_msmarco_passages(max_samples: int = None) -> List[Dict[str, str]]:
 
 def apply_qwen3_template(
     passage_data: List[Dict[str, str]],
-    prefix: str = "embed the following sentences that is part of bing query dataset, with target to help find relevant web documents.",
+    instruction: str | None = None,
 ) -> List[str]:
-    """Apply Qwen3 chat template to query-passage pairs."""
-    template = """<|im_start|>system
-You are a helpful assistant specialized in embedding text for retrieval tasks.<|im_end|>
-<|im_start|>user
-{prefix} {passage}<|im_end|>
-<|im_start|>assistant
-"""
+    prefix = '<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
+    suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
+    def format_instruction(instruction, query, doc):
+        if instruction is None:
+            instruction = "Given a web search query, retrieve relevant passages that answer the query"
+        output = f"{prefix}<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}{suffix}"
+        return output
 
     formatted_passages = []
     for passage in passage_data:
-        formatted = template.format(prefix=passage["query"], passage=passage["text"])
+        formatted = format_instruction(None, passage["query"], passage["text"])
         formatted_passages.append(formatted)
 
     return formatted_passages
@@ -68,7 +69,7 @@ def embed_passages(
     base_url: str = "http://localhost:8000",
     api_key: str = "",
     model_name: str = "qwen3",
-    batch_size: int = 128,
+    batch_size: int = 64,
 ) -> List[Dict[str, Any]]:
     """Embed passages using baseten_performance_client."""
     print(f"Embedding {len(passages)} passages...")
@@ -79,7 +80,7 @@ def embed_passages(
     # Prepare request preference
     preference = RequestProcessingPreference(
         batch_size=batch_size,
-        max_concurrent_requests=32,
+        max_concurrent_requests=16,
         timeout_s=600.0,
     )
     try:
@@ -90,7 +91,9 @@ def embed_passages(
             preference=preference,
         )
 
-        print(f"Successfully embedded {len(passages)} passages in {response.total_time:.2f} seconds")
+        print(
+            f"Successfully embedded {len(passages)} passages in {response.total_time:.2f} seconds"
+        )
         return response
 
     except Exception as e:
@@ -112,14 +115,14 @@ def main():
     parser.add_argument("--api-key", help="API key for authentication")
     parser.add_argument("--model", default="qwen3", help="Model name")
     parser.add_argument(
-        "--batch-size", type=int, default=128, help="Batch size for embedding"
+        "--batch-size", type=int, default=64, help="Batch size for embedding"
     )
     parser.add_argument(
         "--output", default="msmarco_embeddings.json", help="Output file"
     )
     parser.add_argument(
         "--prefix",
-        default="embed the following sentences that is part of bing query dataset, with target to help find relevant web documents.",
+        default=None,
         help="Custom prefix",
     )
     args = parser.parse_args()
@@ -150,7 +153,6 @@ def main():
     print(embeddings.total_time)
     times = embeddings.individual_request_times
     print(f"Average batch request time: {sum(times) / len(times):.2f} seconds")
-
 
 
 if __name__ == "__main__":
