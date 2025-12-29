@@ -8,6 +8,7 @@ Loads MSMARCO passages and prepares them for embedding with Qwen3 chat template.
 import os
 import json
 import argparse
+import re
 import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +24,320 @@ from baseten_performance_client import (
     PerformanceClient,
     RequestProcessingPreference,
 )
+
+
+def create_output_directory(model_name: str, base_dir: str = "results") -> str:
+    """Create organized output directory structure for model results."""
+    # Sanitize model name for directory
+    safe_model_name = model_name.lower().replace("-", "_").replace(" ", "_")
+    model_dir = os.path.join(base_dir, safe_model_name)
+
+    # Create subdirectories
+    subdirs = ["plots", "data", "latex"]
+    for subdir in subdirs:
+        os.makedirs(os.path.join(model_dir, subdir), exist_ok=True)
+
+    print(f"Created output directory: {model_dir}")
+    return model_dir
+
+
+def save_plots_multiple_formats(
+    results: List["ConfigurationResult"],
+    base_path: str,
+    base_name: str,
+    plot_formats: Optional[List[str]] = None,
+    plot_dpi: int = 600,
+):
+    """Save plots in multiple formats (SVG, PNG, PDF)."""
+    if plot_formats is None:
+        plot_formats = ["svg", "png", "pdf"]
+
+    # Filter successful results
+    successful_results = [r for r in results if r.success and r.times]
+
+    if not successful_results:
+        print("No successful configurations to plot")
+        return
+
+    # Generate the plot first
+    sns.set_style("whitegrid")
+    plt.figure(figsize=(14, 8))
+
+    # Prepare data for violin plot
+    plot_data = []
+    for result in successful_results:
+        for time in result.times:
+            plot_data.append({"Configuration": result.name, "Time (seconds)": time})
+
+    df = pd.DataFrame(plot_data)
+
+    # Create violin plot
+    colors = [
+        "#1f77b4" if "Disabled" in config else "#ff7f0e"
+        for config in df["Configuration"].unique()
+    ]
+    ax = sns.violinplot(
+        data=df,
+        x="Configuration",
+        y="Time (seconds)",
+        hue="Configuration",
+        palette=colors,
+        inner="box",
+        cut=0,
+        legend=False,
+    )
+
+    # Add statistical annotations
+    for i, result in enumerate(successful_results):
+        if result.times:
+            p50 = (
+                statistics.quantiles(result.times, n=100)[49]
+                if len(result.times) > 1
+                else result.times[0]
+            )
+            p90 = (
+                statistics.quantiles(result.times, n=100)[89]
+                if len(result.times) > 1
+                else result.times[0]
+            )
+            mean = statistics.mean(result.times)
+
+            stats_text = f"P50: {p50:.2f}s\nP90: {p90:.2f}s\nMean: {mean:.2f}s\nTotal: {result.total_time:.2f}s"
+            ax.text(
+                i,
+                max(result.times) * 0.9,
+                stats_text,
+                ha="center",
+                va="top",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                fontsize=9,
+            )
+
+    # Customize plot
+    model_name = successful_results[0].server_info.get("model_name", "Unknown Model")
+    plt.title(
+        f"Latency Distribution Comparison - {model_name}\n(Violin Plot: Full Distribution Shape)",
+        fontsize=14,
+        pad=20,
+    )
+    plt.xlabel("Configuration", fontsize=12)
+    plt.ylabel("Request Time (seconds)", fontsize=12)
+    plt.xticks(rotation=0, ha="right")
+
+    # Add legend
+    from matplotlib.patches import Patch
+
+    legend_elements = [
+        Patch(facecolor="#1f77b4", label="Radix MLP Disabled"),
+        Patch(facecolor="#ff7f0e", label="Radix MLP Enabled"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper right")
+
+    plt.tight_layout()
+
+    # Save in multiple formats
+    plots_dir = os.path.join(base_path, "plots")
+    for fmt in plot_formats:
+        filename = os.path.join(plots_dir, f"{base_name}.{fmt}")
+
+        if fmt == "png":
+            plt.savefig(filename, format=fmt, dpi=plot_dpi, bbox_inches="tight")
+        else:
+            plt.savefig(filename, format=fmt, bbox_inches="tight")
+
+        print(f"Saved plot as {filename}")
+
+    plt.close()
+
+
+def escape_latex(text: str) -> str:
+    """Escape special LaTeX characters."""
+    # Replace LaTeX special characters with escaped versions
+    text = text.replace("&", r"\&")
+    text = text.replace("%", r"\%")
+    text = text.replace("$", r"\$")
+    text = text.replace("#", r"\#")
+    text = text.replace("_", r"\_")
+    text = text.replace("^", r"\^{}")
+    text = text.replace("{", r"\{")
+    text = text.replace("}", r"\}")
+    text = text.replace("~", r"\textasciitilde{}")
+    text = text.replace("\\", r"\textbackslash{}")
+    return text
+
+
+def export_latex_table(
+    results: List["ConfigurationResult"],
+    output_path: str,
+    filename: str = "results_table.tex",
+):
+    """Export results as LaTeX table using booktabs style."""
+    # Filter successful results
+    successful_results = [r for r in results if r.success and r.times]
+
+    if not successful_results:
+        print("No successful configurations for LaTeX table")
+        return
+
+    # Generate LaTeX table content
+    latex_content = []
+    latex_content.append("% LaTeX table generated by simple_msmarco_embed.py")
+    latex_content.append("% Use with: \\input{results_table.tex}")
+    latex_content.append("")
+    latex_content.append("\\begin{tabular}{lcccccc}")
+    latex_content.append("\\toprule")
+    latex_content.append(
+        "Configuration & Max Batch Tokens & Threshold & Requests & P50 (s) & P90 (s) & Mean (s) \\\\"
+    )
+    latex_content.append("\\midrule")
+
+    for result in successful_results:
+        if result.times:
+            # Calculate statistics
+            p50 = (
+                statistics.quantiles(result.times, n=100)[49]
+                if len(result.times) > 1
+                else result.times[0]
+            )
+            p90 = (
+                statistics.quantiles(result.times, n=100)[89]
+                if len(result.times) > 1
+                else result.times[0]
+            )
+            mean = statistics.mean(result.times)
+
+            # Get configuration info
+            config_name = escape_latex(result.name)
+            max_batch_tokens = result.server_info.get("max_batch_tokens", "Unknown")
+            threshold = result.server_info.get("radix_mlp_threshold", 0.0)
+            num_requests = len(result.times)
+
+            # Format table row
+            row = f"{config_name} & {max_batch_tokens} & {threshold} & {num_requests} & {p50:.2f} & {p90:.2f} & {mean:.2f} \\\\"
+            latex_content.append(row)
+
+    latex_content.append("\\bottomrule")
+    latex_content.append("\\end{tabular}")
+
+    # Write to file
+    output_file = os.path.join(output_path, filename)
+    with open(output_file, "w") as f:
+        f.write("\n".join(latex_content))
+
+    print(f"LaTeX table saved to {output_file}")
+
+
+def export_latex_summary(
+    results: List["ConfigurationResult"],
+    plot_filename: str,
+    output_path: str,
+    filename: str = "results_summary.tex",
+):
+    """Export complete LaTeX document with results summary."""
+    # Filter successful results
+    successful_results = [r for r in results if r.success and r.times]
+
+    if not successful_results:
+        print("No successful configurations for LaTeX summary")
+        return
+
+    # Get model info
+    model_name = successful_results[0].server_info.get("model_name", "Unknown Model")
+    model_dtype = successful_results[0].server_info.get("model_dtype", "Unknown")
+
+    # Generate LaTeX document
+    latex_content = []
+    latex_content.append("% LaTeX document generated by simple_msmarco_embed.py")
+    latex_content.append("")
+    latex_content.append("\\documentclass[11pt,a4paper]{article}")
+    latex_content.append("\\usepackage[utf8]{inputenc}")
+    latex_content.append("\\usepackage{graphicx}")
+    latex_content.append("\\usepackage{booktabs}")
+    latex_content.append("\\usepackage{amsmath}")
+    latex_content.append("\\usepackage{svg}")
+    latex_content.append("")
+    latex_content.append(
+        "\\title{Performance Benchmark: " + escape_latex(model_name) + "}"
+    )
+    latex_content.append("\\author{Radix MLP Benchmark}")
+    latex_content.append("\\date{\\today}")
+    latex_content.append("")
+    latex_content.append("\\begin{document}")
+    latex_content.append("")
+    latex_content.append("\\maketitle")
+    latex_content.append("")
+    latex_content.append("\\section{Methodology}")
+    latex_content.append(
+        "This benchmark evaluates the performance of "
+        + escape_latex(model_name)
+        + " ("
+        + escape_latex(model_dtype)
+        + ") with and without Radix MLP optimization. "
+    )
+    latex_content.append(
+        "The test uses MSMARCO validation query-passage pairs formatted with the Qwen3 chat template. "
+    )
+    latex_content.append(
+        "Latency measurements are collected for individual embedding requests and analyzed using percentile statistics."
+    )
+    latex_content.append("")
+    latex_content.append("\\section{Results}")
+    latex_content.append("")
+    latex_content.append("\\subsection{Performance Comparison}")
+    latex_content.append("")
+    latex_content.append("\\begin{table}[h]")
+    latex_content.append("\\centering")
+    latex_content.append("\\caption{Performance comparison across configurations}")
+    latex_content.append("\\input{results_table.tex}")
+    latex_content.append("\\end{table}")
+    latex_content.append("")
+    latex_content.append("\\subsection{Latency Distribution}")
+    latex_content.append("")
+    latex_content.append("\\begin{figure}[h]")
+    latex_content.append("\\centering")
+    latex_content.append("\\includesvg{" + plot_filename + "}")
+    latex_content.append(
+        "\\caption{Latency distribution comparison across configurations}"
+    )
+    latex_content.append("\\label{fig:latency_comparison}")
+    latex_content.append("\\end{figure}")
+    latex_content.append("")
+    latex_content.append("\\section{Analysis}")
+    latex_content.append("")
+
+    # Add analysis based on results
+    enabled_configs = [r for r in successful_results if "Enabled" in r.name]
+    disabled_configs = [r for r in successful_results if "Disabled" in r.name]
+
+    if enabled_configs and disabled_configs:
+        enabled_mean = statistics.mean(
+            [statistics.mean(r.times) for r in enabled_configs]
+        )
+        disabled_mean = statistics.mean(
+            [statistics.mean(r.times) for r in disabled_configs]
+        )
+        improvement = ((disabled_mean - enabled_mean) / disabled_mean) * 100
+
+        latex_content.append(
+            f"The Radix MLP optimization shows an average performance improvement of {improvement:.1f}\\% "
+        )
+        latex_content.append(
+            f"compared to the baseline configuration (mean latency: {enabled_mean:.2f}s vs {disabled_mean:.2f}s)."
+        )
+    else:
+        latex_content.append(
+            "Performance analysis requires both enabled and disabled configurations for comparison."
+        )
+
+    latex_content.append("")
+    latex_content.append("\\end{document}")
+
+    # Write to file
+    output_file = os.path.join(output_path, filename)
+    with open(output_file, "w") as f:
+        f.write("\n".join(latex_content))
+
+    print(f"LaTeX summary saved to {output_file}")
 
 
 @dataclass
@@ -257,7 +572,11 @@ def run_all_configurations_parallel(
 
 
 def plot_comparison_violin(
-    results: List[ConfigurationResult], output_file: str = "radix_mlp_comparison.png"
+    results: List["ConfigurationResult"],
+    output_file: str = "radix_mlp_comparison.png",
+    output_dir: Optional[str] = None,
+    plot_formats: Optional[List[str]] = None,
+    plot_dpi: int = 300,
 ):
     """Create violin plot comparison of all configurations."""
     # Filter successful results
@@ -275,18 +594,16 @@ def plot_comparison_violin(
     plot_data = []
     for result in successful_results:
         for time in result.times:
+            name_pretty = result.name.replace(" (", "\n(")
             plot_data.append({"Configuration": result.name, "Time (seconds)": time})
 
     df = pd.DataFrame(plot_data)
 
     # Create violin plot
-    configs = df["Configuration"].unique()
-    colors = []
-    for config in configs:
-        if "Disabled" in config:
-            colors.append("#1f77b4")
-        else:
-            colors.append("#ff7f0e")
+    colors = [
+        "#1f77b4" if "Disabled" in config else "#ff7f0e"
+        for config in df["Configuration"].unique()
+    ]
     ax = sns.violinplot(
         data=df,
         x="Configuration",
@@ -329,28 +646,41 @@ def plot_comparison_violin(
     # Customize plot
     model_name = successful_results[0].server_info.get("model_name", "Unknown Model")
     plt.title(
-        f"Mean latency {model_name}\n",
+        f"Latency Distribution Comparison - {model_name}\n",
         fontsize=14,
         pad=20,
     )
     plt.xlabel("Configuration", fontsize=12)
     plt.ylabel("Request Time (seconds)", fontsize=12)
-    plt.xticks(rotation=15, ha="right")
+    plt.xticks(rotation=0, ha="center")
 
     # Add legend
     from matplotlib.patches import Patch
 
     legend_elements = [
-        Patch(facecolor="#1f77b4", label="RadixMLP Disabled"),
-        Patch(facecolor="#ff7f0e", label="RadixMLP Enabled"),
+        Patch(facecolor="#1f77b4", label="Radix MLP Disabled"),
+        Patch(facecolor="#ff7f0e", label="Radix MLP Enabled"),
     ]
     ax.legend(handles=legend_elements, loc="upper right")
 
     plt.tight_layout()
 
-    # Save plot
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    print(f"\nComparison plot saved to {output_file}")
+    # Determine output path and formats
+    if output_dir and plot_formats:
+        # Save in multiple formats to specified directory
+        base_name = os.path.splitext(os.path.basename(output_file))[0]
+        for fmt in plot_formats:
+            filename = os.path.join(output_dir, f"{base_name}.{fmt}")
+            if fmt == "png":
+                plt.savefig(filename, format=fmt, dpi=plot_dpi, bbox_inches="tight")
+            else:
+                plt.savefig(filename, format=fmt, bbox_inches="tight")
+            print(f"Comparison plot saved as {filename}")
+    else:
+        # Save single format to original file
+        plt.savefig(output_file, dpi=300, bbox_inches="tight")
+        print(f"\nComparison plot saved to {output_file}")
+
     plt.close()
 
     # Print summary
@@ -377,12 +707,14 @@ def plot_comparison_violin(
                 f"  Max batch tokens: {result.server_info.get('max_batch_tokens', 'Unknown')}"
             )
             print(f"  Requests: {len(result.times)}")
-            print(f"  P50: {p50:.3f}s, P90: {p90:.3f}s, Mean: {mean:.3f}s")
+            print(f"  P50: {p50:.2f}s, P90: {p90:.2f}s, Mean: {mean:.2f}s")
             print(f"  Total duration: {result.total_time:.2f}s")
 
 
 def save_timing_data(
-    results: List[ConfigurationResult], output_file: str = "timing_data.csv"
+    results: List["ConfigurationResult"],
+    output_file: str = "timing_data.csv",
+    output_dir: Optional[str] = None,
 ):
     """Save timing data to CSV file."""
     all_data = []
@@ -408,13 +740,26 @@ def save_timing_data(
 
     if all_data:
         df = pd.DataFrame(all_data)
-        df.to_csv(output_file, index=False)
-        print(f"Timing data saved to {output_file}")
+
+        # Determine output path
+        if output_dir:
+            output_path = os.path.join(output_dir, output_file)
+        else:
+            output_path = output_file
+
+        df.to_csv(output_path, index=False)
+        print(f"Timing data saved to {output_path}")
     else:
         print("No timing data to save")
 
 
-def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
+def plot_latency_percentiles(
+    times: List[float],
+    server_info: Dict[str, Any],
+    output_dir: Optional[str] = None,
+    plot_formats: Optional[List[str]] = None,
+    plot_dpi: int = 300,
+):
     """Plot p50 and p90 latencies using seaborn."""
     if not times:
         print("No timing data available for plotting")
@@ -430,11 +775,11 @@ def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
     p90 = sorted_times[int(len(sorted_times) * 0.9)]
 
     print(f"\n=== Latency Statistics ===")
-    print(f"P50 latency: {p50:.3f} seconds")
-    print(f"P90 latency: {p90:.3f} seconds")
-    print(f"Average latency: {sum(times) / len(times):.3f} seconds")
-    print(f"Min latency: {min(times):.3f} seconds")
-    print(f"Max latency: {max(times):.3f} seconds")
+    print(f"P50 latency: {p50:.2f} seconds")
+    print(f"P90 latency: {p90:.2f} seconds")
+    print(f"Average latency: {sum(times) / len(times):.2f} seconds")
+    print(f"Min latency: {min(times):.2f} seconds")
+    print(f"Max latency: {max(times):.2f} seconds")
     print(f"\n=== Server Information ===")
     print(f"Model: {server_info['model_name']}")
     print(f"Data type: {server_info['model_dtype']}")
@@ -452,10 +797,10 @@ def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
     # Plot 1: Histogram with KDE
     sns.histplot(data=times, bins=30, kde=True, ax=axes[0], alpha=0.7)
     axes[0].axvline(
-        p50, color="red", linestyle="--", linewidth=2, label=f"P50: {p50:.3f}s"
+        p50, color="red", linestyle="--", linewidth=2, label=f"P50: {p50:.2f}s"
     )
     axes[0].axvline(
-        p90, color="orange", linestyle="--", linewidth=2, label=f"P90: {p90:.3f}s"
+        p90, color="orange", linestyle="--", linewidth=2, label=f"P90: {p90:.2f}s"
     )
     axes[0].set_xlabel("Request Time (seconds)", fontsize=12)
     axes[0].set_ylabel("Frequency", fontsize=12)
@@ -473,7 +818,7 @@ def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
     axes[1].text(
         p50,
         0.7,
-        f"P50: {p50:.3f}s",
+        f"P50: {p50:.2f}s",
         ha="center",
         va="bottom",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="red", alpha=0.3),
@@ -481,7 +826,7 @@ def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
     axes[1].text(
         p90,
         0.7,
-        f"P90: {p90:.3f}s",
+        f"P90: {p90:.2f}s",
         ha="center",
         va="top",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="orange", alpha=0.3),
@@ -510,10 +855,23 @@ def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
 
     plt.tight_layout()
 
-    # Save plot
-    plot_filename = "latency_distribution.png"
-    plt.savefig(plot_filename, dpi=300, bbox_inches="tight")
-    print(f"\nLatency plot saved to {plot_filename}")
+    # Determine output path and formats
+    if output_dir and plot_formats:
+        # Save in multiple formats to specified directory
+        base_name = "latency_distribution"
+        for fmt in plot_formats:
+            filename = os.path.join(output_dir, f"{base_name}.{fmt}")
+            if fmt == "png":
+                plt.savefig(filename, format=fmt, dpi=plot_dpi, bbox_inches="tight")
+            else:
+                plt.savefig(filename, format=fmt, bbox_inches="tight")
+            print(f"Latency plot saved as {filename}")
+    else:
+        # Save single format to original location
+        plot_filename = "latency_distribution.png"
+        plt.savefig(plot_filename, dpi=300, bbox_inches="tight")
+        print(f"\nLatency plot saved to {plot_filename}")
+
     plt.close()
 
 
@@ -588,7 +946,37 @@ def main():
         default=None,
         help="Custom prefix",
     )
+    parser.add_argument(
+        "--export-latex",
+        action="store_true",
+        help="Export LaTeX table and summary document",
+    )
+    parser.add_argument(
+        "--plot-formats",
+        default="svg,png,pdf",
+        help="Comma-separated plot formats (default: svg,png,pdf)",
+    )
+    parser.add_argument(
+        "--plot-dpi",
+        type=int,
+        default=600,
+        help="DPI for PNG plots (default: 600)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="results",
+        help="Base output directory (default: results)",
+    )
     args = parser.parse_args()
+
+    # Parse plot formats
+    plot_formats = [fmt.strip() for fmt in args.plot_formats.split(",")]
+
+    # Create output directory structure
+    model_dir = create_output_directory(args.model, args.output_dir)
+    plots_dir = os.path.join(model_dir, "plots")
+    data_dir = os.path.join(model_dir, "data")
+    latex_dir = os.path.join(model_dir, "latex")
 
     # Load query-passage pairs
     passage_data = load_msmarco_passages(args.max_samples)
@@ -628,7 +1016,31 @@ def main():
         times = embeddings.individual_request_times
 
         if times:
-            plot_latency_percentiles(times, server_info)
+            # Use new organized output structure
+            plot_latency_percentiles(
+                times,
+                server_info,
+                output_dir=plots_dir,
+                plot_formats=plot_formats,
+                plot_dpi=args.plot_dpi,
+            )
+
+            # Export LaTeX if requested
+            if args.export_latex:
+                # Create a single result for LaTeX export
+                from dataclasses import dataclass
+
+            # Create a single result for LaTeX export
+            single_result = ConfigurationResult(
+                name=f"Single Port ({args.single_port})",
+                base_url=base_url,
+                server_info=server_info,
+                times=times,
+                total_time=embeddings.total_time or 0.0,
+                success=True,
+            )
+            export_latex_table([single_result], latex_dir)
+            export_latex_summary([single_result], "latency_distribution", latex_dir)
         else:
             print("No timing data available")
 
@@ -646,11 +1058,22 @@ def main():
             api_key=args.api_key or "",
         )
 
-        # Generate comparison plot
-        plot_comparison_violin(results, args.output_plot)
+        # Generate comparison plot with new organized structure
+        plot_comparison_violin(
+            results,
+            args.output_plot,
+            output_dir=plots_dir,
+            plot_formats=plot_formats,
+            plot_dpi=args.plot_dpi,
+        )
 
-        # Save timing data
-        save_timing_data(results, args.save_data)
+        # Save timing data to organized location
+        save_timing_data(results, args.save_data, output_dir=data_dir)
+
+        # Export LaTeX if requested
+        if args.export_latex:
+            export_latex_table(results, latex_dir)
+            export_latex_summary(results, "radix_mlp_comparison", latex_dir)
 
         # Print failed configurations
         failed_results = [r for r in results if not r.success]
