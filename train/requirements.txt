@@ -1,0 +1,5 @@
+flash_attn
+transformers==4.55.0
+torch>=2.4
+numpy
+radix_mlp
