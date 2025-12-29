@@ -8,6 +8,10 @@ Loads MSMARCO passages and prepares them for embedding with Qwen3 chat template.
 import os
 import json
 import argparse
+import statistics
+import matplotlib.pyplot as plt
+import seaborn as sns
+import requests
 from typing import List, Dict, Any
 
 from datasets import load_dataset
@@ -64,13 +68,149 @@ def apply_qwen3_template(
     return formatted_passages
 
 
+def get_server_info(base_url: str) -> Dict[str, Any]:
+    """Get server info from /info endpoint."""
+    try:
+        response = requests.get(f"{base_url}/info")
+        response.raise_for_status()
+        info = response.json()
+        radix_mlp_threshold = info.get("radix_mlp_threshold", 0.0)
+
+        return {
+            "model_name": info.get("model_id", "Unknown"),
+            "model_dtype": info.get("model_dtype", "Unknown"),
+            "version": info.get("version", "Unknown"),
+            "max_concurrent_requests": info.get("max_concurrent_requests", "Unknown"),
+            "max_input_length": info.get("max_input_length", "Unknown"),
+            "max_batch_tokens": info.get("max_batch_tokens", "Unknown"),
+            "radix_mlp_threshold": radix_mlp_threshold,
+            "radix_mlp_enabled": radix_mlp_threshold > 0,
+        }
+    except Exception as e:
+        print(f"Error fetching server info: {e}")
+        return {
+            "model_name": "Unknown",
+            "model_dtype": "Unknown",
+            "version": "Unknown",
+            "max_concurrent_requests": "Unknown",
+            "max_input_length": "Unknown",
+            "max_batch_tokens": "Unknown",
+        }
+    except Exception as e:
+        print(f"Error fetching server info: {e}")
+        return {"model_name": "Unknown", "radix_mlp_threshold": "Unknown"}
+
+
+def plot_latency_percentiles(times: List[float], server_info: Dict[str, Any]):
+    """Plot p50 and p90 latencies using seaborn."""
+    if not times:
+        print("No timing data available for plotting")
+        return
+
+    # Set seaborn style
+    sns.set_style("whitegrid")
+    sns.set_palette("husl")
+
+    # Calculate percentiles
+    sorted_times = sorted(times)
+    p50 = sorted_times[int(len(sorted_times) * 0.5)]
+    p90 = sorted_times[int(len(sorted_times) * 0.9)]
+
+    print(f"\n=== Latency Statistics ===")
+    print(f"P50 latency: {p50:.3f} seconds")
+    print(f"P90 latency: {p90:.3f} seconds")
+    print(f"Average latency: {sum(times) / len(times):.3f} seconds")
+    print(f"Min latency: {min(times):.3f} seconds")
+    print(f"Max latency: {max(times):.3f} seconds")
+    print(f"\n=== Server Information ===")
+    print(f"Model: {server_info['model_name']}")
+    print(f"Data type: {server_info['model_dtype']}")
+    print(f"Version: {server_info['version']}")
+    print(f"Max concurrent requests: {server_info['max_concurrent_requests']}")
+    print(f"Max input length: {server_info['max_input_length']}")
+    print(f"Max batch tokens: {server_info['max_batch_tokens']}")
+    print(f"Radix MLP enabled: {server_info.get('radix_mlp_enabled', False)}")
+    if server_info.get("radix_mlp_enabled", False):
+        print(f"Radix MLP threshold: {server_info.get('radix_mlp_threshold', 0.0)}")
+
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+
+    # Plot 1: Histogram with KDE
+    sns.histplot(data=times, bins=30, kde=True, ax=axes[0], alpha=0.7)
+    axes[0].axvline(
+        p50, color="red", linestyle="--", linewidth=2, label=f"P50: {p50:.3f}s"
+    )
+    axes[0].axvline(
+        p90, color="orange", linestyle="--", linewidth=2, label=f"P90: {p90:.3f}s"
+    )
+    axes[0].set_xlabel("Request Time (seconds)", fontsize=12)
+    axes[0].set_ylabel("Frequency", fontsize=12)
+    axes[0].set_title(
+        f"Latency Distribution with KDE - {server_info['model_name']}", fontsize=14
+    )
+    axes[0].legend(fontsize=11)
+
+    # Plot 2: Box plot with additional info
+    sns.boxplot(data=times, ax=axes[1], orient="h", width=0.3)
+    axes[1].set_xlabel("Request Time (seconds)", fontsize=12)
+    axes[1].set_title("Latency Box Plot", fontsize=14)
+
+    # Add percentile annotations to box plot
+    axes[1].text(
+        p50,
+        0.7,
+        f"P50: {p50:.3f}s",
+        ha="center",
+        va="bottom",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="red", alpha=0.3),
+    )
+    axes[1].text(
+        p90,
+        0.7,
+        f"P90: {p90:.3f}s",
+        ha="center",
+        va="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="orange", alpha=0.3),
+    )
+
+    # Add server info as figure text
+    info_text = f"Model: {server_info['model_name']}\n"
+    info_text += f"Data type: {server_info['model_dtype']}\n"
+    info_text += f"Version: {server_info['version']}\n"
+    info_text += f"Max input length: {server_info['max_input_length']}"
+    info_text += f"\nMax batch tokens: {server_info['max_batch_tokens']}\n"
+    if server_info.get("radix_mlp_enabled", False):
+        info_text += f"Radix MLP enabled: with threshold {server_info.get('radix_mlp_threshold', 0.0)}\n"
+    else:
+        info_text += f"Radix MLP enabled: False\n"
+
+    fig.text(
+        0.02,
+        0.98,
+        info_text,
+        transform=fig.transFigure,
+        verticalalignment="top",
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.8),
+    )
+
+    plt.tight_layout()
+
+    # Save plot
+    plot_filename = "latency_distribution.png"
+    plt.savefig(plot_filename, dpi=300, bbox_inches="tight")
+    print(f"\nLatency plot saved to {plot_filename}")
+    plt.close()
+
+
 def embed_passages(
     passages: List[str],
     base_url: str = "http://localhost:8000",
     api_key: str = "",
     model_name: str = "qwen3",
     batch_size: int = 64,
-) -> List[Dict[str, Any]]:
+):
     """Embed passages using baseten_performance_client."""
     print(f"Embedding {len(passages)} passages...")
 
@@ -98,7 +238,7 @@ def embed_passages(
 
     except Exception as e:
         print(f"Error embedding passages: {e}")
-        return []
+        return None
 
 
 def main():
@@ -141,6 +281,9 @@ def main():
     print(f"\nExample formatted passage:")
     print(formatted_passages[0][:200] + "...")
 
+    # Get server info first
+    server_info = get_server_info(args.base_url)
+
     # Embed passages
     embeddings = embed_passages(
         formatted_passages,
@@ -149,10 +292,20 @@ def main():
         args.model,
         args.batch_size,
     )
+
+    if embeddings is None:
+        print("Failed to embed passages")
+        return
+
     print("Performance stats:")
-    print(embeddings.total_time)
+    print(f"Total time: {embeddings.total_time:.2f} seconds")
     times = embeddings.individual_request_times
-    print(f"Average batch request time: {sum(times) / len(times):.2f} seconds")
+
+    if times:
+        # Plot latency percentiles instead of just average
+        plot_latency_percentiles(times, server_info)
+    else:
+        print("No timing data available")
 
 
 if __name__ == "__main__":
