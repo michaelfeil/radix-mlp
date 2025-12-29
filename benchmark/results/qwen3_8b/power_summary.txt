@@ -1,0 +1,111 @@
+CUDA Device Power Consumption Summary
+==================================================
+
+Device: radix_mlp_disabled_65536
+------------------------------
+Power Draw (W):
+  Mean: 648.03
+  Std:  83.02
+  Min:  114.20
+  Max:  692.74
+  P50:  661.80
+  P90:  672.96
+  P95:  677.34
+Temperature (°C):
+  Mean: 59.4
+  Max:  63.0
+GPU Utilization (%):
+  Mean: 97.1
+  Max:  100.0
+Graphics Clock (MHz):
+  Mean: 1757
+  Min:  1425
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 2450
+  Recording duration: 490.0s
+
+Device: radix_mlp_enabled_65536
+------------------------------
+Power Draw (W):
+  Mean: 454.36
+  Std:  270.32
+  Min:  111.50
+  Max:  686.50
+  P50:  663.05
+  P90:  676.08
+  P95:  678.09
+Temperature (°C):
+  Mean: 51.9
+  Max:  68.0
+GPU Utilization (%):
+  Mean: 61.0
+  Max:  100.0
+Graphics Clock (MHz):
+  Mean: 1859
+  Min:  1575
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 2450
+  Recording duration: 490.0s
+
+Device: radix_mlp_enabled_16384
+------------------------------
+Power Draw (W):
+  Mean: 458.03
+  Std:  274.27
+  Min:  109.28
+  Max:  687.23
+  P50:  671.67
+  P90:  678.45
+  P95:  680.02
+Temperature (°C):
+  Mean: 47.8
+  Max:  61.0
+GPU Utilization (%):
+  Mean: 61.2
+  Max:  100.0
+Graphics Clock (MHz):
+  Mean: 1897
+  Min:  1770
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 2450
+  Recording duration: 490.0s
+
+Device: radix_mlp_disabled_16384
+------------------------------
+Power Draw (W):
+  Mean: 662.70
+  Std:  108.28
+  Min:  118.09
+  Max:  694.57
+  P50:  684.87
+  P90:  688.72
+  P95:  689.75
+Temperature (°C):
+  Mean: 61.1
+  Max:  64.0
+GPU Utilization (%):
+  Mean: 95.8
+  Max:  100.0
+Graphics Clock (MHz):
+  Mean: 1794
+  Min:  1665
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 2450
+  Recording duration: 490.0s
+
