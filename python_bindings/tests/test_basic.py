@@ -71,7 +71,7 @@ def test_empty_input():
     cu_seq_lengths = np.array([], dtype=np.uint32)
 
     compact_ids, compact_pos, scatter, fold = compute_fold_and_scatter(
-        input_ids, position_ids, cu_seq_lengths
+        input_ids, position_ids, cu_seq_lengths, None, False
     )
 
     assert len(compact_ids) == 0

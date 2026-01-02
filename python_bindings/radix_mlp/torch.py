@@ -25,6 +25,7 @@ def compute_fold_and_scatter_torch(
     position_ids: torch.Tensor,
     cu_seq_lengths: torch.Tensor,
     pad_multiple_of: Optional[int] = None,
+    bound_checks: Optional[bool] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute indices for RadixMLP-style folding and scattering using PyTorch tensors.
@@ -42,6 +43,8 @@ def compute_fold_and_scatter_torch(
             Can be int32 or int64, on any device.
         pad_multiple_of: If Some(n), pad output to multiple of n for performance.
             If None, no padding is applied.
+        bound_checks: If True or None, enable bounds checking for safety.
+            If False, disable bounds checking for maximum performance (may cause undefined behavior with invalid inputs).
 
     Returns:
         A tuple of four PyTorch tensors on the same device as the inputs:
@@ -120,7 +123,7 @@ def compute_fold_and_scatter_torch(
         scatter_indices_np,
         fold_gather_np,
     ) = _compute_fold_and_scatter_numpy(
-        input_ids_np, position_ids_np, cu_seq_lengths_np, pad_multiple_of
+        input_ids_np, position_ids_np, cu_seq_lengths_np, pad_multiple_of, bound_checks
     )
 
     # Convert back to torch tensors (as int32 for better compatibility)
