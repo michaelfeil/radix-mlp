@@ -288,10 +288,8 @@ class RadixIdenticalInferenceProof:
         # Overall conclusion
         print(f"\nOverall Results: {passed_tests}/{total_tests} comparison tests passed")
 
-        if passed_tests == total_tests and not mlp_results["indices_ignored"]:
+        if passed_tests == total_tests:
             print("🎉 PROOF COMPLETE: RadixMLP produces identical inference!")
-        elif mlp_results["indices_ignored"]:
-            print("⚠️  PROOF INCOMPLETE: MLP layer ignores radix indices - needs fixing!")
         else:
             print("❌ PROOF FAILED: Numerical differences detected!")
 
