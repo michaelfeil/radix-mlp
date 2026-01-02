@@ -22,11 +22,8 @@ from torch.nn import functional as F
 
 # both RadixMLP and flash attention are REQUIRED dependencies
 
-# Add python_bindings to path for radix_mlp
 import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python_bindings"))
 
 # required deps
 from radix_mlp.torch import compute_fold_and_scatter_torch
