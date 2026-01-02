@@ -179,16 +179,21 @@ def apply_rotary_pos_emb_single(
     # Apply rotation
     x_rot = torch.cat([-x2, x1], dim=-1) if rot_dim == head_dim else torch.cat([x1, x2], dim=-1)
 
-    # Apply cos/sin
+    # Apply cos/sin using standard rotary embedding formula
+    # x: [num_tokens, num_heads, head_dim]
+    # cos, sin: [num_tokens, head_dim//2]
+
+    # Split x into two halves along head_dim
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+
+    # Apply rotation to each half
     cos_expanded = cos.unsqueeze(-2)  # [num_tokens, 1, head_dim//2]
     sin_expanded = sin.unsqueeze(-2)  # [num_tokens, 1, head_dim//2]
 
-    # Expand cos/sin to match head_dim for broadcasting
-    cos_expanded = torch.cat([cos_expanded, cos_expanded], dim=-1)  # [num_tokens, 1, head_dim]
-    sin_expanded = torch.cat([sin_expanded, sin_expanded], dim=-1)  # [num_tokens, 1, head_dim]
-
-    # Apply rotation with cos/sin
-    x_rotated = x * cos_expanded + rotate_half(x) * sin_expanded
+    x_rotated = torch.cat(
+        [x1 * cos_expanded - x2 * sin_expanded, x1 * sin_expanded + x2 * cos_expanded], dim=-1
+    )
 
     return x_rotated
 
@@ -237,7 +242,7 @@ class Qwen3RotaryEmbedding(nn.Module):
         )
         with torch.cuda.amp.autocast(enabled=False):  # Force float32
             freqs = (
-                position_ids_expanded.float() @ inv_freq_expanded.float().transpose(0, 1)
+                position_ids_expanded.float() @ inv_freq_expanded.float().unsqueeze(0)
             ).squeeze(-1)  # [num_tokens, head_dim//2]
             emb = torch.cat((freqs, freqs), dim=-1)  # [num_tokens, head_dim]
             cos = emb.cos() * self.attention_scaling
