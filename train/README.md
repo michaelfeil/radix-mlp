@@ -16,7 +16,7 @@ RadixMLP is a prefix-based computation sharing optimization for transformer mode
 radix-mlp/
 ├── train/                          # Training and proof scripts
 │   ├── radix_torch_varlen.py       # PyTorch RadixMLP implementation of qwen3
-│   ├── radix_mlp_qwen3_modeling_varlen.rs  # Rust ground truth implementation
+│   ├── radix_mlp_qwen3_modeling_varlen.rs  # Rust ground truth implementation (reference only)
 │   ├── proof_radix_forward_backward.py    # Forward/backward pass equivalence 
 │   ├── proof_radix_identical_inference.py      # Inference equivalence proof
 │   └── test_huggingface_comparison.py          # Weight loading and compatibility test
