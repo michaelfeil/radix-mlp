@@ -16,63 +16,6 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
-class RadixIndexSelect(torch.autograd.Function):
-    """Custom gradient function for radix index selection."""
-
-    @staticmethod
-    def forward(ctx, input, indices):
-        """Forward pass: gather from input using indices."""
-        ctx.save_for_backward(indices)
-        ctx.input_shape = input.shape
-        return torch.index_select(input, dim=0, index=indices)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """Backward pass: scatter gradients back to original positions."""
-        (indices,) = ctx.saved_tensors
-        input_shape = ctx.input_shape
-
-        # Create gradient tensor with same shape as input
-        grad_input = torch.zeros(input_shape, dtype=grad_output.dtype, device=grad_output.device)
-
-        # Scatter gradients to original positions
-        grad_input.scatter_add_(
-            0, indices.unsqueeze(-1).expand(-1, grad_output.size(-1)), grad_output
-        )
-
-        return grad_input, None
-
-
-class RadixScatter(torch.autograd.Function):
-    """Custom gradient function for radix scatter operation."""
-
-    @staticmethod
-    def forward(ctx, input, indices):
-        """Forward pass: scatter from compact to original space."""
-        ctx.save_for_backward(indices)
-        ctx.compact_shape = input.shape
-
-        # Create output tensor
-        output_shape = (indices.shape[0], input.shape[-1])
-        output = torch.zeros(output_shape, dtype=input.dtype, device=input.device)
-
-        # Scatter values to original positions
-        output.scatter_add_(0, indices.unsqueeze(-1).expand(-1, input.size(-1)), input)
-
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """Backward pass: gather gradients from original to compact space."""
-        (indices,) = ctx.saved_tensors
-        compact_shape = ctx.compact_shape
-
-        # Gather gradients from original positions
-        grad_input = torch.index_select(grad_output, dim=0, index=indices)
-
-        return grad_input, None
-
-
 class SimpleRadixMLP(torch.nn.Module):
     """Simplified MLP layer with radix support for testing."""
 
@@ -94,7 +37,7 @@ class SimpleRadixMLP(torch.nn.Module):
         """Forward pass with optional radix folding/scattering."""
         if fold_gather is not None and scatter_indices is not None:
             # Radix mode: use custom gradient functions
-            x_compact = RadixIndexSelect.apply(x, fold_gather)
+            x_compact = x.index_select(0, fold_gather)
 
             # Compute in compact space
             gate_states = self.gate_proj(x_compact)
@@ -102,7 +45,7 @@ class SimpleRadixMLP(torch.nn.Module):
             down_compact = self.down_proj(torch.nn.functional.silu(gate_states) * up_states)
 
             # Scatter back to original space with proper gradients
-            output = RadixScatter.apply(down_compact, scatter_indices)
+            output = down_compact.index_select(0, scatter_indices)
         else:
             # Non-radix mode: standard computation
             gate_states = self.gate_proj(x)
