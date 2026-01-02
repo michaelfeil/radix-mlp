@@ -101,12 +101,8 @@ fn compute_fold_and_scatter(
     });
 
     // Handle the result and convert errors if needed
-    let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = match result {
-        Ok(computation_result) => computation_result,
-        Err(error_msg) => {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(error_msg));
-        }
-    };
+    let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
+        result.map_err(|msg| PyErr::new::<pyo3::exceptions::PyValueError, _>(msg))?;
 
     // Convert back to numpy arrays
     let compact_input_ids_arr = PyArray1::from_vec(py, compact_input_ids);
