@@ -142,21 +142,26 @@ def test_torch_length_mismatch_error():
     with pytest.raises(ValueError, match="must have same length"):
         compute_fold_and_scatter_torch(input_ids, position_ids, cu_seq_lengths)
 
-
-def test_torch_empty_input():
+@pytest.mark.parametrize("bound_checks", [True, False])
+def test_torch_empty_input(bound_checks):
     """Test empty input handling."""
     input_ids = torch.tensor([], dtype=torch.int32)
     position_ids = torch.tensor([], dtype=torch.int32)
     cu_seq_lengths = torch.tensor([], dtype=torch.int32)
 
-    compact_ids, compact_pos, scatter, fold = compute_fold_and_scatter_torch(
-        input_ids, position_ids, cu_seq_lengths
-    )
-
-    assert len(compact_ids) == 0
-    assert len(compact_pos) == 0
-    assert len(scatter) == 0
-    assert len(fold) == 0
+    if bound_checks:
+        with pytest.raises(ValueError):
+            compute_fold_and_scatter_torch(
+                input_ids, position_ids, cu_seq_lengths, pad_multiple_of=None, bound_checks=bound_checks
+            )
+    else:
+        compact_ids, compact_pos, scatter, fold = compute_fold_and_scatter_torch(
+            input_ids, position_ids, cu_seq_lengths, pad_multiple_of=None, bound_checks=bound_checks
+        )
+        assert len(compact_ids) == 0
+        assert len(compact_pos) == 0
+        assert len(scatter) == 0
+        assert len(fold) == 0
 
 
 def test_torch_single_sequence():
