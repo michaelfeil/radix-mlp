@@ -109,6 +109,7 @@ class Qwen3Config:
         rope_scaling: Optional[dict] = None,
         sliding_window: Optional[int] = None,
         layer_types: Optional[List[str]] = None,
+        head_dim: Optional[int] = None,
         _attn_implementation: str = "flash_attention_2",
         **kwargs,
     ):
@@ -133,7 +134,7 @@ class Qwen3Config:
         self.sliding_window = sliding_window
         self.layer_types = layer_types or ["full_attention"] * num_hidden_layers
         self._attn_implementation = "flash_attention_2"  # Force flash attention
-        self.head_dim = hidden_size // num_attention_heads
+        self.head_dim = head_dim if head_dim is not None else hidden_size // num_attention_heads
 
         # Set rope_parameters for compatibility
         self.rope_parameters = {"rope_type": "default", "rope_theta": rope_theta}

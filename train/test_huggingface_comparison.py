@@ -68,6 +68,7 @@ def test_single_sequence_comparison():
             hidden_act=vanilla_model.config.hidden_act,
             max_position_embeddings=vanilla_model.config.max_position_embeddings,
             rms_norm_eps=vanilla_model.config.rms_norm_eps,
+            head_dim=vanilla_model.config.head_dim,  # Add head_dim
             use_radix_mlp=True,  # Enable radix
             use_flash_attn_varlen=True,
             radix_pad_multiple_of=8,
