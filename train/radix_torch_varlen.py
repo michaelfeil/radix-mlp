@@ -338,15 +338,21 @@ class RadixMLPQwen3Attention(nn.Module):
         k_compact = apply_rotary_pos_emb_single(k_compact, cos, sin)
 
         # Following Rust implementation: scatter to ORIGINAL space for attention
-        q = torch.index_select(
-            q_compact, dim=0, index=scatter_indices
-        )  # [original_tokens, num_heads, head_dim]b
-        k = torch.index_select(
-            k_compact, dim=0, index=scatter_indices
-        )  # [original_tokens, num_kv_heads, head_dim]
-        v = torch.index_select(
-            v_compact, dim=0, index=scatter_indices
-        )  # [original_tokens, num_kv_heads, head_dim]
+        skip_radix = scatter_indices.shape[0] == fold_gather.shape[0] and (scatter_indices == fold_gather).all().item()
+        if skip_radix:
+            q = q_compact
+            k = k_compact
+            v = v_compact
+        else:
+            q = torch.index_select(
+                q_compact, dim=0, index=scatter_indices
+            )  # [original_tokens, num_heads, head_dim]b
+            k = torch.index_select(
+                k_compact, dim=0, index=scatter_indices
+            )  # [original_tokens, num_kv_heads, head_dim]
+            v = torch.index_select(
+                v_compact, dim=0, index=scatter_indices
+            )  # [original_tokens, num_kv_heads, head_dim]
 
         # Flash attention in ORIGINAL space (following Rust ground truth)
         attn_output = flash_attn_varlen_func(
@@ -368,9 +374,12 @@ class RadixMLPQwen3Attention(nn.Module):
         attn_output = attn_output.view(
             -1, self.config.num_attention_heads * self.head_dim
         )  # [original_tokens, hidden_size]
-        attn_output_compact = torch.index_select(
-            attn_output, dim=0, index=fold_gather
-        )  # [compact_tokens, hidden_size]
+        if skip_radix:
+            attn_output_compact = attn_output
+        else:
+            attn_output_compact = torch.index_select(
+                attn_output, dim=0, index=fold_gather
+            )  # [compact_tokens, hidden_size]
 
         # Apply output projection
         attn_output_compact = self.o_proj(attn_output_compact)
