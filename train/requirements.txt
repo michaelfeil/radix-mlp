@@ -1,0 +1,8 @@
+# cd train 
+# uv venv --python 3.12 # set up train/.venv
+# uv pip install -r requirements.txt
+transformers==4.55.0
+torch==2.9
+https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+numpy
+radix_mlp
