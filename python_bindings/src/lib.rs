@@ -17,17 +17,17 @@ fn compute_fold_and_scatter(
     Py<PyArray1<u32>>,
     Py<PyArray1<u32>>,
 )> {
-    // Convert numpy arrays to Rust slices
-    let input_ids_slice = unsafe { input_ids.as_slice()? };
-    let position_ids_slice = unsafe { position_ids.as_slice()? };
-    let cu_seq_lengths_slice = unsafe { cu_seq_lengths.as_slice()? };
+    // Copy numpy arrays to Rust Vecs for thread-safe access without the GIL
+    let input_data_vec = unsafe { input_ids.as_slice()?.to_vec() };
+    let position_data_vec = unsafe { position_ids.as_slice()?.to_vec() };
+    let cu_seq_lengths_data_vec = unsafe { cu_seq_lengths.as_slice()?.to_vec() };
 
     // Release GIL during computation
     let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = py.detach(|| {
         radix_mlp::compute_fold_and_scatter(
-            input_ids_slice,
-            position_ids_slice,
-            cu_seq_lengths_slice,
+            &input_data_vec,
+            &position_data_vec,
+            &cu_seq_lengths_data_vec,
             pad_multiple_of,
         )
     });
