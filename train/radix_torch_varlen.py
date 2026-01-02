@@ -414,12 +414,8 @@ class RadixMLPQwen3Attention(nn.Module):
         # Apply output projection
         attn_output_compact = self.o_proj(attn_output_compact)
 
-        # CRITICAL FIX: Scatter back to original space for residual connection
-        attn_output = torch.index_select(
-            attn_output_compact, dim=0, index=scatter_indices
-        )  # [original_tokens, hidden_size]
-
-        return attn_output
+        # Stay in compact space - MLP runs in compact space
+        return attn_output_compact
 
 
 class RadixMLPQwen3DecoderLayer(nn.Module):
@@ -466,7 +462,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states) 
+        hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
         return hidden_states
 
