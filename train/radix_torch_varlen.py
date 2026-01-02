@@ -353,6 +353,11 @@ class RadixMLPQwen3Attention(nn.Module):
             v = torch.index_select(
                 v_compact, dim=0, index=scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
+        q_dtype = q.dtype   
+        if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
+            q = q.to(torch.float16)
+            k = k.to(torch.float16)
+            v = v.to(torch.float16)
 
         # Flash attention in ORIGINAL space (following Rust ground truth)
         attn_output = flash_attn_varlen_func(
@@ -369,6 +374,8 @@ class RadixMLPQwen3Attention(nn.Module):
             softmax_scale=self.scaling,
             causal=self.is_causal,
         )
+        if attn_output.dtype != q_dtype:
+            attn_output = attn_output.to(q_dtype)
 
         # Following Rust: fold back to COMPACT space before o_proj
         attn_output = attn_output.view(

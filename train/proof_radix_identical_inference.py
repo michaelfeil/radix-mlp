@@ -84,7 +84,7 @@ class RadixModelComparator:
     def _create_model(self) -> RadixMLPQwen3ForCausalLM:
         """Create test model with specified config."""
         model = RadixMLPQwen3ForCausalLM(self.config)
-        model = model.to("cuda").to(torch.float16)
+        model = model.to("cuda").to(torch.float32)
         return model
 
     def prepare_batchless_inputs(
