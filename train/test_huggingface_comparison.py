@@ -72,7 +72,6 @@ def test_single_sequence_comparison():
             head_dim=vanilla_model.config.head_dim,  # Add head_dim
             use_radix_mlp=True,  # Enable radix
             use_flash_attn_varlen=True,
-            radix_pad_multiple_of=None, 
         )
 
         # Create radix model

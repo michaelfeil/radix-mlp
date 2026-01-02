@@ -22,7 +22,7 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import radix implementation
-from radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
+from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
 
 
 class TestSequenceGenerator:
@@ -379,10 +379,9 @@ class RadixIdenticalInferenceProof:
             num_key_value_heads=2,
             hidden_act="silu",
             max_position_embeddings=128,
-            rms_norm_eps=1e-6,
+            rms_norm_eps=1e-5,
             use_radix_mlp=True,
             use_flash_attn_varlen=True,
-            radix_pad_multiple_of=8,
         )
 
     def run_all_proofs(self) -> Dict[str, Any]:

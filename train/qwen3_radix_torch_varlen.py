@@ -6,7 +6,6 @@ and variable length sequence support using flash attention.
 
 Design principles based on Rust ground truth:
 - Batchless architecture: All tensors are num_tokens long (no batch dimension)
-- use_flash_attn_varlen is always true
 - RadixMLP folding/scattering for prefix sharing following Rust implementation
 - Variable length sequence support with cu_seq_lengths
 - Uses torch.index_select for efficient fold/scatter operations
@@ -207,16 +206,12 @@ class RadixMLPQwen3Config(Qwen3Config):
     def __init__(
         self,
         use_radix_mlp: bool = True,
-        radix_pad_multiple_of: Optional[int] = 8,
         radix_min_prefix_length: int = 4,
-        use_flash_attn_varlen: bool = True,  # Always true
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.use_radix_mlp = use_radix_mlp
-        self.radix_pad_multiple_of = radix_pad_multiple_of
         self.radix_min_prefix_length = radix_min_prefix_length
-        self.use_flash_attn_varlen = True  # Force true must be true.
 
 
 class RadixMLPQwen3MLP(nn.Module):
@@ -270,7 +265,6 @@ class RadixMLPQwen3Attention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
-        self.use_flash_attn_varlen = True  # Always true
 
         # Standard attention projections - match actual loaded model
         self.q_proj = nn.Linear(
