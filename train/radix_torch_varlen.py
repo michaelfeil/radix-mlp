@@ -329,10 +329,10 @@ class RadixMLPQwen3Attention(nn.Module):
         self.is_causal = True
         self.use_flash_attn_varlen = True  # Always true
 
-        # Standard attention projections
+        # Standard attention projections - match actual loaded model
         self.q_proj = nn.Linear(
             config.hidden_size,
-            config.num_attention_heads * self.head_dim,
+            config.num_attention_heads * self.head_dim,  # Match actual loaded model
             bias=config.attention_bias,
         )
         self.k_proj = nn.Linear(

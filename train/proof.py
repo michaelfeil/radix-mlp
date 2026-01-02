@@ -202,41 +202,27 @@ def copy_weights(vanilla_model: Any, radix_model: Any) -> None:
     # Copy layer weights
     for i in range(len(vanilla_model.model.layers)):
         # Attention weights
-        radix_model.model.layers[
-            i
-        ].self_attn.q_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.q_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.q_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.k_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.k_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.k_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.v_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.v_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.v_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.o_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.o_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.o_proj.weight.data.clone()
 
         # Normalization weights
-        radix_model.model.layers[
-            i
-        ].self_attn.q_norm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.q_norm.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.q_norm.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.k_norm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].self_attn.k_norm.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.k_norm.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].input_layernorm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].input_layernorm.weight.data = vanilla_model.model.layers[
             i
         ].input_layernorm.weight.data.clone()
         radix_model.model.layers[
@@ -246,19 +232,13 @@ def copy_weights(vanilla_model: Any, radix_model: Any) -> None:
         ].post_attention_layernorm.weight.data.clone()
 
         # MLP weights
-        radix_model.model.layers[
-            i
-        ].mlp.gate_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].mlp.gate_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.gate_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].mlp.up_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].mlp.up_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.up_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].mlp.down_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[i].mlp.down_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.down_proj.weight.data.clone()
 
@@ -290,8 +270,8 @@ def test_forward_pass_equality(
 
     # Prepare inputs
     vanilla_inputs = prepare_vanilla_inputs(sequences)
-    radix_input_ids, radix_position_ids, cu_seq_lengths, max_seq_len = (
-        prepare_batchless_inputs(sequences)
+    radix_input_ids, radix_position_ids, cu_seq_lengths, max_seq_len = prepare_batchless_inputs(
+        sequences
     )
 
     print(f"Vanilla input shape: {vanilla_inputs['input_ids'].shape}")
@@ -337,9 +317,7 @@ def test_forward_pass_equality(
         token_idx = 0
         for batch_idx in range(batch_size):
             for seq_idx in range(seq_len):
-                if (
-                    vanilla_inputs["attention_mask"][batch_idx, seq_idx] == 1
-                ):  # Real token
+                if vanilla_inputs["attention_mask"][batch_idx, seq_idx] == 1:  # Real token
                     radix_logits_reshaped[batch_idx, seq_idx] = radix_logits[token_idx]
                     token_idx += 1
 
@@ -349,9 +327,7 @@ def test_forward_pass_equality(
         mean_diff = diff.mean().item()
 
         # Check if they are close (using a relatively loose tolerance)
-        are_close = torch.allclose(
-            vanilla_logits, radix_logits_reshaped, rtol=1e-3, atol=1e-3
-        )
+        are_close = torch.allclose(vanilla_logits, radix_logits_reshaped, rtol=1e-3, atol=1e-3)
 
         results.update(
             {
