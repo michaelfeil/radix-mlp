@@ -19,25 +19,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-# Import radix MLP functionality
-try:
-    from radix_mlp.torch import compute_fold_and_scatter_torch
+# both RadixMLP and flash attention are REQUIRED dependencies
 
-    RADIX_MLP_AVAILABLE = True
-except ImportError:
-    RADIX_MLP_AVAILABLE = False
-    compute_fold_and_scatter_torch = None
-    print("Warning: radix_mlp not available. Using standard implementation.")
+from radix_mlp.torch import compute_fold_and_scatter_torch
 
-# Import flash attention functionality
-try:
-    from flash_attn import flash_attn_varlen_func
-
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
-    flash_attn_varlen_func = None
-    print("Warning: flash_attn not available. Using standard attention.")
+from flash_attn import flash_attn_varlen_func
 
 
 class Qwen3Config:
@@ -236,7 +222,7 @@ class RadixMLPQwen3MLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.use_radix_mlp = config.use_radix_mlp and RADIX_MLP_AVAILABLE
+        self.use_radix_mlp = config.use_radix_mlp 
 
         # Standard MLP layers
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
@@ -338,99 +324,6 @@ class RadixMLPQwen3Attention(nn.Module):
         sin: torch.Tensor,
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
-        fold_gather: Optional[torch.Tensor] = None,
-        scatter_indices: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Forward pass with variable length and radix support.
-
-        Args:
-            hidden_states: Input tensor [num_tokens, hidden_size]
-            cos: Cosine values for rotary embeddings [num_tokens, head_dim//2]
-            sin: Sine values for rotary embeddings [num_tokens, head_dim//2]
-            cu_seq_lengths: Cumulative sequence lengths [batch_size + 1]
-            max_seq_len: Maximum sequence length in batch
-            fold_gather: Optional indices for radix folding
-            scatter_indices: Optional indices for radix scattering
-
-        Returns:
-            Output tensor [num_tokens, hidden_size]
-        """
-        num_tokens = hidden_states.shape[0]
-
-        # Choose between radix and standard varlen attention
-        if fold_gather is not None and scatter_indices is not None:
-            return self._forward_varlen_radix(
-                hidden_states,
-                cos,
-                sin,
-                cu_seq_lengths,
-                max_seq_len,
-                fold_gather,
-                scatter_indices,
-            )
-        else:
-            return self._forward_varlen(hidden_states, cos, sin, cu_seq_lengths, max_seq_len)
-
-    def _forward_varlen(
-        self,
-        hidden_states: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-        cu_seq_lengths: torch.Tensor,
-        max_seq_len: int,
-    ) -> torch.Tensor:
-        """Variable length attention forward pass using flash_attn_varlen_func."""
-        num_tokens = hidden_states.shape[0]
-
-        # Project to Q, K, V
-        q = self.q_proj(hidden_states)  # [num_tokens, num_heads * head_dim]
-        k = self.k_proj(hidden_states)  # [num_tokens, num_kv_heads * head_dim]
-        v = self.v_proj(hidden_states)  # [num_tokens, num_kv_heads * head_dim]
-
-        # Reshape and normalize
-        q = q.view(num_tokens, self.config.num_attention_heads, self.head_dim)
-        k = k.view(num_tokens, self.config.num_key_value_heads, self.head_dim)
-        v = v.view(num_tokens, self.config.num_key_value_heads, self.head_dim)
-
-        q = self.q_norm(q.transpose(0, 1)).transpose(0, 1)  # [num_tokens, num_heads, head_dim]
-        k = self.k_norm(k.transpose(0, 1)).transpose(0, 1)  # [num_tokens, num_kv_heads, head_dim]
-
-        # Apply rotary embeddings
-        q = apply_rotary_pos_emb_single(q, cos, sin)
-        k = apply_rotary_pos_emb_single(k, cos, sin)
-
-        # Use flash attention varlen
-        if flash_attn_varlen_func is not None:
-            attn_output = flash_attn_varlen_func(
-                q.unsqueeze(0),  # [1, num_tokens, num_heads, head_dim]
-                k.unsqueeze(0),  # [1, num_tokens, num_kv_heads, head_dim]
-                v.unsqueeze(0),  # [1, num_tokens, num_kv_heads, head_dim]
-                cu_seqlens_q=cu_seq_lengths,
-                cu_seqlens_k=cu_seq_lengths,
-                max_seqlen_q=max_seq_len,
-                max_seqlen_k=max_seq_len,
-                dropout_p=0.0 if not self.training else self.attention_dropout,
-                softmax_scale=self.scaling,
-                causal=self.is_causal,
-            )
-            attn_output = attn_output.squeeze(0)  # [num_tokens, num_heads, head_dim]
-        else:
-            raise RuntimeError("flash_attn_varlen_func is not available")
-
-        # Reshape and apply output projection
-        attn_output = attn_output.view(num_tokens, -1)  # [num_tokens, hidden_size]
-        attn_output = self.o_proj(attn_output)
-
-        return attn_output
-
-    def _forward_varlen_radix(
-        self,
-        hidden_states: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-        cu_seq_lengths: torch.Tensor,
-        max_seq_len: int,
         fold_gather: torch.Tensor,
         scatter_indices: torch.Tensor,
     ) -> torch.Tensor:
@@ -473,39 +366,40 @@ class RadixMLPQwen3Attention(nn.Module):
         q_compact = apply_rotary_pos_emb_single(q_compact, cos_compact, sin_compact)
         k_compact = apply_rotary_pos_emb_single(k_compact, cos_compact, sin_compact)
 
-        # Use flash attention for compact sequences
-        if flash_attn_varlen_func is not None:
-            # For radix, we need to adjust cu_seq_lengths for compact space
-            # This is complex - for now, treat as single sequence
-            cu_seqlens_compact = torch.tensor(
-                [0, compact_num_tokens], dtype=torch.int32, device=hidden_states.device
-            )
 
-            attn_output_compact = flash_attn_varlen_func(
-                q_compact.unsqueeze(0),  # [1, compact_tokens, num_heads, head_dim]
-                k_compact.unsqueeze(0),  # [1, compact_tokens, num_kv_heads, head_dim]
-                v_compact.unsqueeze(0),  # [1, compact_tokens, num_kv_heads, head_dim]
-                cu_seqlens_q=cu_seqlens_compact,
-                cu_seqlens_k=cu_seqlens_compact,
-                max_seqlen_q=compact_num_tokens,
-                max_seqlen_k=compact_num_tokens,
-                dropout_p=0.0 if not self.training else self.attention_dropout,
-                softmax_scale=self.scaling,
-                causal=self.is_causal,
-            )
-            attn_output_compact = attn_output_compact.squeeze(
-                0
-            )  # [compact_tokens, num_heads, head_dim]
-        else:
-            raise RuntimeError("flash_attn_varlen_func is not available")
+        # scatter to original space for q, k, v computation
+        q = torch.index_select(
+            q_compact, dim=0, index=scatter_indices
+        )  # [original_tokens, num_heads, head_dim]
+        k = torch.index_select(
+            k_compact, dim=0, index=scatter_indices
+        )  # [original_tokens, num_kv_heads, head_dim]
+        v = torch.index_select(
+            v_compact, dim=0, index=scatter_indices
+        )  # [original_tokens, num_kv_heads, head_dim]
+        attn_output_compact = flash_attn_varlen_func(
+            q.unsqueeze(0),  # [1, compact_tokens, num_heads, head_dim]
+            k.unsqueeze(0),  # [1, compact_tokens, num_kv_heads, head_dim]
+            v.unsqueeze(0),  # [1, compact_tokens, num_kv_heads, head_dim]
+            cu_seqlens_q=cu_seq_lengths,
+            cu_seqlens_k=cu_seq_lengths,
+            max_seqlen_q=max_seq_len,
+            max_seqlen_k=max_seq_len,
+            dropout_p=0.0 if not self.training else self.attention_dropout, # qwen3 uses 0.0 dropout for training and eval.
+            softmax_scale=self.scaling,
+            causal=self.is_causal,
+        )
+        attn_output_compact = attn_output_compact.squeeze(
+            0
+        )  # [compact_tokens, num_heads, head_dim]
+        
 
-        # 3. Scatter: expand back to original space following Rust ground truth
-        # unfolded[i] = compact[scatter_indices[i]]
+        # 3. fold: gather back to original space
         attn_output_compact = attn_output_compact.view(
             compact_num_tokens, -1
         )  # [compact_tokens, hidden_size]
         attn_output_flat = torch.index_select(
-            attn_output_compact, dim=0, index=scatter_indices
+            attn_output_compact, dim=0, index=fold_gather
         )  # [original_tokens, hidden_size]
 
         # Apply output projection
@@ -598,7 +492,7 @@ class RadixMLPQwen3Model(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         cu_seq_lengths: torch.Tensor,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Prepare radix folding/scattering indices following Rust ground truth.
 
@@ -610,29 +504,22 @@ class RadixMLPQwen3Model(nn.Module):
         Returns:
             Tuple of (fold_gather, scatter_indices)
         """
-        if (
-            not self.use_radix_mlp
-            or not RADIX_MLP_AVAILABLE
-            or compute_fold_and_scatter_torch is None
-        ):
-            return None, None
+        if not self.use_radix_mlp:
+            identity = torch.arange(input_ids.shape[0]).to(input_ids.device)
+            return identity, identity
 
-        try:
-            # Compute radix folding/scattering indices using Rust implementation
-            compact_input_ids, compact_position_ids, scatter_indices, fold_gather = (
-                compute_fold_and_scatter_torch(
-                    input_ids,
-                    position_ids,
-                    cu_seq_lengths,
-                    pad_multiple_of=self.config.radix_pad_multiple_of,
-                )
+        # Compute radix folding/scattering indices using Rust implementation
+        compact_input_ids, compact_position_ids, scatter_indices, fold_gather = (
+            compute_fold_and_scatter_torch(
+                input_ids,
+                position_ids,
+                cu_seq_lengths,
+                pad_multiple_of=self.config.radix_pad_multiple_of,
             )
+        )
 
-            return fold_gather, scatter_indices
+        return fold_gather, scatter_indices
 
-        except Exception as e:
-            print(f"Warning: Radix processing failed ({e}), using standard approach")
-            return None, None
 
     def forward(
         self,
@@ -653,16 +540,24 @@ class RadixMLPQwen3Model(nn.Module):
         Returns:
             Output tensor [num_tokens, hidden_size]
         """
-        # Embed tokens
-        hidden_states = self.embed_tokens(input_ids)  # [num_tokens, hidden_size]
-
-        # Generate rotary embeddings
-        cos, sin = self.rotary_emb(position_ids)  # [num_tokens, head_dim//2] each
-
-        # Prepare radix indices
         fold_gather, scatter_indices = self._prepare_radix_indices(
             input_ids, position_ids, cu_seq_lengths
         )
+        input_ids_compact = torch.index_select(
+            input_ids, dim=-1, index=fold_gather
+        )
+        position_ids_compact = torch.index_select(
+            position_ids, dim=-1, index=fold_gather
+        )
+
+        # Embed tokens
+        hidden_states = self.embed_tokens(input_ids_compact)  # [num_tokens, hidden_size]
+
+        # Generate rotary embeddings
+        cos, sin = self.rotary_emb(position_ids_compact)  # [num_tokens, head_dim//2] each
+
+        # Prepare radix indices
+        
 
         # Forward through layers
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
