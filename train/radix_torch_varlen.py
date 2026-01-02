@@ -576,7 +576,7 @@ class RadixMLPQwen3Model(nn.Module):
         hidden_states = self.norm(hidden_states)
 
         # Following Rust: scatter final outputs back to original layout
-        if self.use_radix_mlp and scatter_indices is not None:
+        if use_radix_mlp:
             hidden_states = torch.index_select(hidden_states, dim=0, index=scatter_indices)
 
         return hidden_states
