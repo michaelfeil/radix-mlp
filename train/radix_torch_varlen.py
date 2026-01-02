@@ -204,7 +204,7 @@ class Qwen3RotaryEmbedding(nn.Module):
         self.rope_type = "default"
 
         base = config.rope_theta
-        dim = config.head_dim
+        dim = config.head_dim // 2  # Only need half the dimensions for cos/sin
         attention_factor = 1.0
 
         inv_freq = 1.0 / (
