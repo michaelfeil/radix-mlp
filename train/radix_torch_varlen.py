@@ -518,8 +518,14 @@ class RadixMLPQwen3Model(nn.Module):
         fold_gather, scatter_indices = self._prepare_radix_indices(
             input_ids, position_ids, cu_seq_lengths, use_radix_mlp=use_radix_mlp
         )
-        input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather)
-        position_ids_compact = torch.index_select(position_ids, dim=0, index=fold_gather)
+        skip_radix = scatter_indices.shape[0] == fold_gather.shape[0] and (scatter_indices == fold_gather).all().item()
+        
+        if skip_radix:
+            input_ids_compact = input_ids
+            position_ids_compact = position_ids
+        else:
+            input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather) 
+            position_ids_compact = torch.index_select(position_ids, dim=0, index=fold_gather)
         # Embed tokens
         hidden_states = self.embed_tokens(input_ids_compact)  # [num_tokens, hidden_size]
 
@@ -543,7 +549,7 @@ class RadixMLPQwen3Model(nn.Module):
         hidden_states = self.norm(hidden_states)
 
         # Following Rust: scatter final outputs back to original layout
-        if use_radix_mlp:
+        if use_radix_mlp and not skip_radix:
             hidden_states = torch.index_select(hidden_states, dim=0, index=scatter_indices)
 
         return hidden_states
