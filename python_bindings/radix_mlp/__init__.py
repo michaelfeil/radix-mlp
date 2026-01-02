@@ -26,6 +26,7 @@ def compute_fold_and_scatter(
     position_ids: NDArray[np.uint32],
     cu_seq_lengths: NDArray[np.uint32],
     pad_multiple_of: Optional[int] = None,
+    bound_checks: Optional[bool] = None,
 ) -> Tuple[NDArray[np.uint32], NDArray[np.uint32], NDArray[np.uint32], NDArray[np.uint32]]:
     """
     Compute indices for RadixMLP-style folding and scattering.
@@ -39,6 +40,8 @@ def compute_fold_and_scatter(
         cu_seq_lengths: Cumulative sequence lengths, e.g., [0, len_seq1, len_seq1+len_seq2, ...].
         pad_multiple_of: If Some(n), pad output to multiple of n for performance.
             If None, no padding is applied.
+        bound_checks: If True or None, enable bounds checking for safety.
+            If False, disable bounds checking for maximum performance (may cause undefined behavior with invalid inputs).
 
     Returns:
         A tuple of four numpy arrays:
@@ -84,7 +87,9 @@ def compute_fold_and_scatter(
         )
 
     # Call Rust implementation
-    return _compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths, pad_multiple_of)
+    return _compute_fold_and_scatter(
+        input_ids, position_ids, cu_seq_lengths, pad_multiple_of, bound_checks
+    )
 
 
 __all__ = ["compute_fold_and_scatter"]
