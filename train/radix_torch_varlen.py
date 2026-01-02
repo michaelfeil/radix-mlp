@@ -32,7 +32,6 @@ from radix_mlp.torch import compute_fold_and_scatter_torch
 from flash_attn import flash_attn_varlen_func
 
 
-
 class Qwen3Config:
     """Basic Qwen3 config for compatibility."""
 
@@ -393,9 +392,9 @@ class RadixMLPQwen3Attention(nn.Module):
 
         # Flash attention in ORIGINAL space (following Rust ground truth)
         attn_output = flash_attn_varlen_func(
-            q.unsqueeze(0),  # [1, original_tokens, num_heads, head_dim]
-            k.unsqueeze(0),  # [1, original_tokens, num_kv_heads, head_dim]
-            v.unsqueeze(0),  # [1, original_tokens, num_kv_heads, head_dim]
+            q,  # [original_tokens, num_heads, head_dim]
+            k,  # [original_tokens, num_kv_heads, head_dim]
+            v,  # [original_tokens, num_kv_heads, head_dim]
             cu_seqlens_q=cu_seq_lengths,
             cu_seqlens_k=cu_seq_lengths,
             max_seqlen_q=max_seq_len,
@@ -406,7 +405,6 @@ class RadixMLPQwen3Attention(nn.Module):
             softmax_scale=self.scaling,
             causal=self.is_causal,
         )
-        attn_output = attn_output.squeeze(0)  # [original_tokens, num_heads, head_dim]
 
         # Following Rust: fold back to COMPACT space before o_proj
         attn_output = attn_output.view(
