@@ -27,61 +27,10 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python_bindings"))
 
+# required deps
 from radix_mlp.torch import compute_fold_and_scatter_torch
+from flash_attn import flash_attn_varlen_func
 
-# Mock flash_attn if not available
-try:
-    from flash_attn import flash_attn_varlen_func
-except ImportError:
-    print("Warning: flash_attn not available, using mock implementation")
-
-    def flash_attn_varlen_func(
-        q,
-        k,
-        v,
-        cu_seqlens_q=None,
-        cu_seqlens_k=None,
-        max_seqlen_q=None,
-        max_seqlen_k=None,
-        dropout_p=0.0,
-        softmax_scale=None,
-        causal=True,
-        window_size=(-1, -1),
-        alibi_slopes=None,
-        deterministic=False,
-        return_attn_probs=False,
-    ):
-        """Mock implementation of flash_attn_varlen_func for testing."""
-        # Simple attention implementation as fallback
-        batch_size, num_tokens, num_heads, head_dim = q.shape
-
-        # Reshape for standard attention
-        q = q.view(batch_size * num_tokens, num_heads, head_dim)
-        k = k.view(batch_size * num_tokens, num_heads, head_dim)
-        v = v.view(batch_size * num_tokens, num_heads, head_dim)
-
-        # Compute attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * (softmax_scale or (head_dim**-0.5))
-
-        if causal:
-            # Create causal mask
-            seq_len = num_tokens
-            causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-            causal_mask = causal_mask.to(q.device)
-            scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
-
-        # Apply softmax
-        attn_weights = torch.softmax(scores, dim=-1)
-        if dropout_p > 0.0:
-            attn_weights = torch.nn.functional.dropout(attn_weights, p=dropout_p, training=True)
-
-        # Apply attention to values
-        output = torch.matmul(attn_weights, v)
-
-        # Reshape back
-        output = output.view(batch_size, num_tokens, num_heads, head_dim)
-
-        return output
 
 
 class Qwen3Config:
@@ -270,7 +219,7 @@ class RadixMLPQwen3Config(Qwen3Config):
         self.use_radix_mlp = use_radix_mlp
         self.radix_pad_multiple_of = radix_pad_multiple_of
         self.radix_min_prefix_length = radix_min_prefix_length
-        self.use_flash_attn_varlen = True  # Force true
+        self.use_flash_attn_varlen = True  # Force true must be true.
 
 
 class RadixMLPQwen3MLP(nn.Module):
@@ -512,7 +461,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             hidden_states=hidden_states,
             cos=cos,
             sin=sin,
-            cu_seq_lengths=cu_seq_lengths,
+            cu_seq_lengths=cu_seq_lengths.to(torch.int32),
             max_seq_len=max_seq_len,
             fold_gather=fold_gather,
             scatter_indices=scatter_indices,
@@ -580,11 +529,10 @@ class RadixMLPQwen3Model(nn.Module):
                 input_ids,
                 position_ids,
                 cu_seq_lengths,
-                pad_multiple_of=self.config.radix_pad_multiple_of,
             )
         )
 
-        return fold_gather, scatter_indices
+        return fold_gather.to(input_ids.device), scatter_indices.to(input_ids.device)
 
     def forward(
         self,
@@ -610,7 +558,6 @@ class RadixMLPQwen3Model(nn.Module):
         )
         input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather)
         position_ids_compact = torch.index_select(position_ids, dim=0, index=fold_gather)
-
         # Embed tokens
         hidden_states = self.embed_tokens(input_ids_compact)  # [num_tokens, hidden_size]
 

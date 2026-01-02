@@ -36,13 +36,14 @@ def test_single_sequence_comparison():
         # Load vanilla model and tokenizer
         print("📦 Loading vanilla transformers model...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        vanilla_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32)
+        vanilla_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
         vanilla_model.eval()
+        vanilla_model = vanilla_model.to("cuda")
 
         # Tokenize input
         inputs = tokenizer(test_text, return_tensors="pt", padding=True)
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
+        input_ids = inputs["input_ids"].to("cuda")
+        attention_mask = inputs["attention_mask"].to("cuda")
 
         print(f"Input IDs: {input_ids.tolist()}")
         print(f"Input shape: {input_ids.shape}")
@@ -71,26 +72,28 @@ def test_single_sequence_comparison():
             head_dim=vanilla_model.config.head_dim,  # Add head_dim
             use_radix_mlp=True,  # Enable radix
             use_flash_attn_varlen=True,
-            radix_pad_multiple_of=8,
+            radix_pad_multiple_of=None, 
         )
 
         # Create radix model
         print("📦 Creating radix model...")
         radix_model = RadixMLPQwen3ForCausalLM(radix_config)
         radix_model.eval()
+        radix_model = radix_model.to(torch.float16)
 
         # Copy weights from vanilla to radix model
         print("🔄 Copying weights from vanilla to radix...")
         copy_weights_from_vanilla_to_radix(vanilla_model, radix_model)
+        radix_model = radix_model.to("cuda")
 
         # Prepare radix inputs (batchless format)
         print("📊 Preparing radix inputs...")
         batch_size, seq_len = input_ids.shape
 
         # Convert to batchless format
-        radix_input_ids = input_ids.squeeze(0)  # [seq_len]
-        radix_position_ids = torch.arange(seq_len, dtype=torch.long)  # [seq_len]
-        radix_cu_seq_lengths = torch.tensor([0, seq_len], dtype=torch.long)  # [2]
+        radix_input_ids = input_ids.squeeze(0).cuda()  # [seq_len]
+        radix_position_ids = torch.arange(seq_len, dtype=torch.long).cuda()  # [seq_len]
+        radix_cu_seq_lengths = torch.tensor([0, seq_len], dtype=torch.long).cuda()  # [2]
         radix_max_seq_len = seq_len
 
         print(f"Radix input IDs: {radix_input_ids.tolist()}")
