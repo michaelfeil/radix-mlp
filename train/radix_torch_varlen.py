@@ -10,6 +10,7 @@ Design principles based on Rust ground truth:
 - RadixMLP folding/scattering for prefix sharing following Rust implementation
 - Variable length sequence support with cu_seq_lengths
 - Uses torch.index_select for efficient fold/scatter operations
+- needs to run on CUDA. CPU is not supported due to varlen dependency. and fp16/bf16 only.
 """
 
 from typing import Optional, Union, Tuple, List, Any
