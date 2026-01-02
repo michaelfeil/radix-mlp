@@ -240,16 +240,12 @@ class RadixMLPQwen3MLP(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        fold_gather: Optional[torch.Tensor] = None,
-        scatter_indices: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass with optional radix folding/scattering.
 
         Args:
             x: Input tensor [num_tokens, hidden_size] (already in correct space)
-            fold_gather: Optional indices to gather from original to compact space
-            scatter_indices: Optional indices to scatter from compact to original space
 
         Returns:
             Output tensor with same shape as input
@@ -469,7 +465,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)  # MLP processes compact tensors directly
+        hidden_states = self.mlp(hidden_states) 
         hidden_states = residual + hidden_states
         return hidden_states
 
@@ -484,7 +480,6 @@ class RadixMLPQwen3Model(nn.Module):
         self.config = config
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.use_radix_mlp = config.use_radix_mlp
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
@@ -500,11 +495,12 @@ class RadixMLPQwen3Model(nn.Module):
             hasattr(config, "layer_types") and "sliding_attention" in config.layer_types
         )
 
+    @staticmethod
     def _prepare_radix_indices(
-        self,
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         cu_seq_lengths: torch.Tensor,
+        use_radix_mlp: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Prepare radix folding/scattering indices following Rust ground truth.
@@ -517,7 +513,7 @@ class RadixMLPQwen3Model(nn.Module):
         Returns:
             Tuple of (fold_gather, scatter_indices)
         """
-        if not self.use_radix_mlp:
+        if not use_radix_mlp:
             identity = torch.arange(input_ids.shape[0]).to(input_ids.device)
             return identity, identity
 
@@ -538,6 +534,7 @@ class RadixMLPQwen3Model(nn.Module):
         position_ids: torch.Tensor,
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
+        use_radix_mlp: bool = True,
     ) -> torch.Tensor:
         """
         Forward pass with radix and varlen support.
@@ -552,7 +549,7 @@ class RadixMLPQwen3Model(nn.Module):
             Output tensor [num_tokens, hidden_size]
         """
         fold_gather, scatter_indices = self._prepare_radix_indices(
-            input_ids, position_ids, cu_seq_lengths
+            input_ids, position_ids, cu_seq_lengths, use_radix_mlp=use_radix_mlp
         )
         input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather)
         position_ids_compact = torch.index_select(position_ids, dim=0, index=fold_gather)
@@ -604,6 +601,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
         labels: Optional[torch.Tensor] = None,
+        use_radix_mlp: bool = True,
     ) -> Any:
         """
         Forward pass for causal language modeling.
@@ -623,6 +621,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             position_ids=position_ids,
             cu_seq_lengths=cu_seq_lengths,
             max_seq_len=max_seq_len,
+            use_radix_mlp=use_radix_mlp,
         )
 
         # Compute logits
