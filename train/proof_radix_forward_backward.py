@@ -12,9 +12,6 @@ from typing import List, Tuple, Dict, Any, Optional
 import sys
 import os
 
-# Add current directory to path for imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 
 class SimpleRadixMLP(torch.nn.Module):
     """Simplified MLP layer with radix support for testing."""

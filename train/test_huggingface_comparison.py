@@ -15,7 +15,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import radix implementation
-from radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
+from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
 
 
 def test_single_sequence_comparison():
