@@ -315,49 +315,10 @@ class RadixMLPQwen3Attention(nn.Module):
         scatter_indices: torch.Tensor,
     ) -> torch.Tensor:
         """Variable length attention with radix folding/scattering."""
-        # 1. Fold: apply radix folding to reduce computation following Rust ground truth
-        # compact[j] = original[fold_gather[j]]
-        hidden_states_compact = torch.index_select(
-            hidden_states, dim=0, index=fold_gather
-        )  # [compact_tokens, hidden_size]
-        cos_compact = torch.index_select(
-            cos, dim=0, index=fold_gather
-        )  # [compact_tokens, head_dim//2]
-        sin_compact = torch.index_select(
-            sin, dim=0, index=fold_gather
-        )  # [compact_tokens, head_dim//2]
-
-        compact_num_tokens = hidden_states_compact.shape[0]
-        print(f"DEBUG: hidden_states_compact.shape: {hidden_states_compact.shape}")
-        print(f"DEBUG: compact_num_tokens: {compact_num_tokens}")
-        print(f"DEBUG: fold_gather.shape: {fold_gather.shape}")
-        print(f"DEBUG: scatter_indices.shape: {scatter_indices.shape}")
-
-        # 2. Compute attention in compact space
-        # Project to Q, K, V
-        print(f"DEBUG: self.q_proj.weight.shape: {self.q_proj.weight.shape}")
-        print(f"DEBUG: self.k_proj.weight.shape: {self.k_proj.weight.shape}")
-        print(f"DEBUG: self.v_proj.weight.shape: {self.v_proj.weight.shape}")
-
-        q_compact = self.q_proj(hidden_states_compact)  # [compact_tokens, num_heads * head_dim]
-        k_compact = self.k_proj(hidden_states_compact)  # [compact_tokens, num_kv_heads * head_dim]
-        v_compact = self.v_proj(hidden_states_compact)  # [compact_tokens, num_kv_heads * head_dim]
-
-        # Reshape and normalize
-        # Debug: print shapes before reshape
-        print(f"DEBUG: q_compact.shape before reshape: {q_compact.shape}")
-        print(f"DEBUG: k_compact.shape before reshape: {k_compact.shape}")
-        print(f"DEBUG: v_compact.shape before reshape: {v_compact.shape}")
-        print(f"DEBUG: compact_num_tokens: {compact_num_tokens}")
-        print(f"DEBUG: num_attention_heads: {self.config.num_attention_heads}")
-        print(f"DEBUG: num_key_value_heads: {self.config.num_key_value_heads}")
-        print(f"DEBUG: head_dim: {self.head_dim}")
-        print(
-            f"DEBUG: num_attention_heads * head_dim: {self.config.num_attention_heads * self.head_dim}"
-        )
-        print(
-            f"DEBUG: num_key_value_heads * head_dim: {self.config.num_key_value_heads * self.head_dim}"
-        )
+        compact_num_tokens = hidden_states.shape[0]
+        q_compact = self.q_proj(hidden_states)  # [compact_tokens, num_heads * head_dim]
+        k_compact = self.k_proj(hidden_states)  # [compact_tokens, num_kv_heads * head_dim]
+        v_compact = self.v_proj(hidden_states)  # [compact_tokens, num_kv_heads * head_dim]
 
         q_compact = q_compact.view(
             compact_num_tokens, self.config.num_attention_heads, self.head_dim
@@ -373,13 +334,13 @@ class RadixMLPQwen3Attention(nn.Module):
         k_compact = self.k_norm(k_compact.transpose(0, 1)).transpose(0, 1)
 
         # Apply rotary embeddings
-        q_compact = apply_rotary_pos_emb_single(q_compact, cos_compact, sin_compact)
-        k_compact = apply_rotary_pos_emb_single(k_compact, cos_compact, sin_compact)
+        q_compact = apply_rotary_pos_emb_single(q_compact, cos, sin) # cos and sin are [compact_tokens, head_dim//2]
+        k_compact = apply_rotary_pos_emb_single(k_compact, cos, sin)
 
         # Following Rust implementation: scatter to ORIGINAL space for attention
         q = torch.index_select(
             q_compact, dim=0, index=scatter_indices
-        )  # [original_tokens, num_heads, head_dim]
+        )  # [original_tokens, num_heads, head_dim]b
         k = torch.index_select(
             k_compact, dim=0, index=scatter_indices
         )  # [original_tokens, num_kv_heads, head_dim]
