@@ -118,9 +118,7 @@ def test_radix_model():
         print(f"  Sequence {i + 1}: {seq}")
 
     # Prepare inputs
-    input_ids, position_ids, cu_seq_lengths, max_seq_len = prepare_batchless_inputs(
-        test_cases
-    )
+    input_ids, position_ids, cu_seq_lengths, max_seq_len = prepare_batchless_inputs(test_cases)
 
     print(f"\nInput shapes:")
     print(f"  input_ids: {input_ids.shape}")
@@ -229,41 +227,27 @@ def test_radix_vs_no_radix():
 
     for i in range(len(radix_model.model.layers)):
         # Copy attention weights
-        radix_model.model.layers[
-            i
-        ].self_attn.q_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.q_proj.weight.data = standard_model.model.layers[
             i
         ].self_attn.q_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.k_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.k_proj.weight.data = standard_model.model.layers[
             i
         ].self_attn.k_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.v_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.v_proj.weight.data = standard_model.model.layers[
             i
         ].self_attn.v_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.o_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.o_proj.weight.data = standard_model.model.layers[
             i
         ].self_attn.o_proj.weight.data.clone()
 
         # Copy normalization weights
-        radix_model.model.layers[
-            i
-        ].self_attn.q_norm.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.q_norm.weight.data = standard_model.model.layers[
             i
         ].self_attn.q_norm.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].self_attn.k_norm.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].self_attn.k_norm.weight.data = standard_model.model.layers[
             i
         ].self_attn.k_norm.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].input_layernorm.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].input_layernorm.weight.data = standard_model.model.layers[
             i
         ].input_layernorm.weight.data.clone()
         radix_model.model.layers[
@@ -273,19 +257,13 @@ def test_radix_vs_no_radix():
         ].post_attention_layernorm.weight.data.clone()
 
         # Copy MLP weights
-        radix_model.model.layers[
-            i
-        ].mlp.gate_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].mlp.gate_proj.weight.data = standard_model.model.layers[
             i
         ].mlp.gate_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].mlp.up_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].mlp.up_proj.weight.data = standard_model.model.layers[
             i
         ].mlp.up_proj.weight.data.clone()
-        radix_model.model.layers[
-            i
-        ].mlp.down_proj.weight.data = standard_model.model.layers[
+        radix_model.model.layers[i].mlp.down_proj.weight.data = standard_model.model.layers[
             i
         ].mlp.down_proj.weight.data.clone()
 
@@ -301,9 +279,7 @@ def test_radix_vs_no_radix():
     test_cases = create_test_sequences()
 
     # Prepare inputs
-    input_ids, position_ids, cu_seq_lengths, max_seq_len = prepare_batchless_inputs(
-        test_cases
-    )
+    input_ids, position_ids, cu_seq_lengths, max_seq_len = prepare_batchless_inputs(test_cases)
 
     print(f"Testing with sequences that have shared prefixes")
     print(f"Total tokens: {input_ids.shape[0]}")

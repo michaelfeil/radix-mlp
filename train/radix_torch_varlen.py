@@ -172,28 +172,22 @@ def apply_rotary_pos_emb_single(
     head_dim = x.shape[-1]
     rot_dim = cos.shape[-1] * 2
 
-    # Split into two halves
+    # Split x into two halves
     x1 = x[..., : rot_dim // 2]
     x2 = x[..., rot_dim // 2 : rot_dim]
 
-    # Apply rotation
-    x_rot = torch.cat([-x2, x1], dim=-1) if rot_dim == head_dim else torch.cat([x1, x2], dim=-1)
-
-    # Apply cos/sin using standard rotary embedding formula
-    # x: [num_tokens, num_heads, head_dim]
-    # cos, sin: [num_tokens, head_dim//2]
-
-    # Split x into two halves along head_dim
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-
-    # Apply rotation to each half
+    # Apply rotation using standard formula
     cos_expanded = cos.unsqueeze(-2)  # [num_tokens, 1, head_dim//2]
     sin_expanded = sin.unsqueeze(-2)  # [num_tokens, 1, head_dim//2]
 
-    x_rotated = torch.cat(
-        [x1 * cos_expanded - x2 * sin_expanded, x1 * sin_expanded + x2 * cos_expanded], dim=-1
-    )
+    x1_rot = x1 * cos_expanded - x2 * sin_expanded
+    x2_rot = x1 * sin_expanded + x2 * cos_expanded
+
+    x_rotated = torch.cat([x1_rot, x2_rot], dim=-1)
+
+    # If rot_dim < head_dim, keep the remaining dimensions unchanged
+    if rot_dim < head_dim:
+        x_rotated = torch.cat([x_rotated, x[..., rot_dim:]], dim=-1)
 
     return x_rotated
 
@@ -288,7 +282,7 @@ class RadixMLPQwen3MLP(nn.Module):
         self.intermediate_size = config.intermediate_size
         self.use_radix_mlp = config.use_radix_mlp
 
-        # Standard MLP layers
+        # Rust-style MLP: separate projections but concatenated during forward
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
@@ -311,9 +305,10 @@ class RadixMLPQwen3MLP(nn.Module):
         Returns:
             Output tensor with same shape as input
         """
-        # Following Rust implementation: MLP processes tensors directly
-        # without any fold/scatter operations (they're handled at layer level)
-        down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        # Following Rust implementation: concatenate gate/up during forward
+        gate_states = self.gate_proj(x)  # [num_tokens, intermediate_size]
+        up_states = self.up_proj(x)  # [num_tokens, intermediate_size]
+        down_proj = self.down_proj(self.act_fn(gate_states) * up_states)
         return down_proj
 
 
@@ -387,14 +382,37 @@ class RadixMLPQwen3Attention(nn.Module):
         )  # [compact_tokens, head_dim//2]
 
         compact_num_tokens = hidden_states_compact.shape[0]
+        print(f"DEBUG: hidden_states_compact.shape: {hidden_states_compact.shape}")
+        print(f"DEBUG: compact_num_tokens: {compact_num_tokens}")
+        print(f"DEBUG: fold_gather.shape: {fold_gather.shape}")
+        print(f"DEBUG: scatter_indices.shape: {scatter_indices.shape}")
 
         # 2. Compute attention in compact space
         # Project to Q, K, V
+        print(f"DEBUG: self.q_proj.weight.shape: {self.q_proj.weight.shape}")
+        print(f"DEBUG: self.k_proj.weight.shape: {self.k_proj.weight.shape}")
+        print(f"DEBUG: self.v_proj.weight.shape: {self.v_proj.weight.shape}")
+
         q_compact = self.q_proj(hidden_states_compact)  # [compact_tokens, num_heads * head_dim]
         k_compact = self.k_proj(hidden_states_compact)  # [compact_tokens, num_kv_heads * head_dim]
         v_compact = self.v_proj(hidden_states_compact)  # [compact_tokens, num_kv_heads * head_dim]
 
         # Reshape and normalize
+        # Debug: print shapes before reshape
+        print(f"DEBUG: q_compact.shape before reshape: {q_compact.shape}")
+        print(f"DEBUG: k_compact.shape before reshape: {k_compact.shape}")
+        print(f"DEBUG: v_compact.shape before reshape: {v_compact.shape}")
+        print(f"DEBUG: compact_num_tokens: {compact_num_tokens}")
+        print(f"DEBUG: num_attention_heads: {self.config.num_attention_heads}")
+        print(f"DEBUG: num_key_value_heads: {self.config.num_key_value_heads}")
+        print(f"DEBUG: head_dim: {self.head_dim}")
+        print(
+            f"DEBUG: num_attention_heads * head_dim: {self.config.num_attention_heads * self.head_dim}"
+        )
+        print(
+            f"DEBUG: num_key_value_heads * head_dim: {self.config.num_key_value_heads * self.head_dim}"
+        )
+
         q_compact = q_compact.view(
             compact_num_tokens, self.config.num_attention_heads, self.head_dim
         )
@@ -449,7 +467,12 @@ class RadixMLPQwen3Attention(nn.Module):
         )  # [compact_tokens, hidden_size]
 
         # Apply output projection
-        attn_output = self.o_proj(attn_output_compact)
+        attn_output_compact = self.o_proj(attn_output_compact)
+
+        # CRITICAL FIX: Scatter back to original space for residual connection
+        attn_output = torch.index_select(
+            attn_output_compact, dim=0, index=scatter_indices
+        )  # [original_tokens, hidden_size]
 
         return attn_output
 
