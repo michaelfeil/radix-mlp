@@ -142,6 +142,7 @@ def test_torch_length_mismatch_error():
     with pytest.raises(ValueError, match="must have same length"):
         compute_fold_and_scatter_torch(input_ids, position_ids, cu_seq_lengths)
 
+
 @pytest.mark.parametrize("bound_checks", [True, False])
 def test_torch_empty_input(bound_checks):
     """Test empty input handling."""
@@ -152,7 +153,11 @@ def test_torch_empty_input(bound_checks):
     if bound_checks:
         with pytest.raises(ValueError):
             compute_fold_and_scatter_torch(
-                input_ids, position_ids, cu_seq_lengths, pad_multiple_of=None, bound_checks=bound_checks
+                input_ids,
+                position_ids,
+                cu_seq_lengths,
+                pad_multiple_of=None,
+                bound_checks=bound_checks,
             )
     else:
         compact_ids, compact_pos, scatter, fold = compute_fold_and_scatter_torch(
