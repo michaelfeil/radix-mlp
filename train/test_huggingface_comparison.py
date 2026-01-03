@@ -9,7 +9,6 @@ import torch
 import sys
 import os
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import numpy as np
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +35,9 @@ def test_single_sequence_comparison():
         # Load vanilla model and tokenizer
         print("📦 Loading vanilla transformers model...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        vanilla_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
+        vanilla_model = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float16
+        )
         vanilla_model.eval()
         vanilla_model = vanilla_model.to("cuda")
 
@@ -52,7 +53,9 @@ def test_single_sequence_comparison():
         # Get vanilla model output
         print("🔄 Running vanilla model...")
         with torch.no_grad():
-            vanilla_outputs = vanilla_model(input_ids=input_ids, attention_mask=attention_mask)
+            vanilla_outputs = vanilla_model(
+                input_ids=input_ids, attention_mask=attention_mask
+            )
             vanilla_logits = vanilla_outputs.logits  # [1, seq_len, vocab_size]
 
         print(f"Vanilla logits shape: {vanilla_logits.shape}")
@@ -92,7 +95,9 @@ def test_single_sequence_comparison():
         # Convert to batchless format
         radix_input_ids = input_ids.squeeze(0).cuda()  # [seq_len]
         radix_position_ids = torch.arange(seq_len, dtype=torch.long).cuda()  # [seq_len]
-        radix_cu_seq_lengths = torch.tensor([0, seq_len], dtype=torch.long).cuda()  # [2]
+        radix_cu_seq_lengths = torch.tensor(
+            [0, seq_len], dtype=torch.long
+        ).cuda()  # [2]
         radix_max_seq_len = seq_len
 
         print(f"Radix input IDs: {radix_input_ids.tolist()}")
@@ -137,27 +142,41 @@ def copy_weights_from_vanilla_to_radix(vanilla_model, radix_model):
     # Copy layer weights
     for i in range(len(vanilla_model.model.layers)):
         # Attention weights
-        radix_model.model.layers[i].self_attn.q_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.q_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.q_proj.weight.data.clone()
-        radix_model.model.layers[i].self_attn.k_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.k_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.k_proj.weight.data.clone()
-        radix_model.model.layers[i].self_attn.v_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.v_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.v_proj.weight.data.clone()
-        radix_model.model.layers[i].self_attn.o_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.o_proj.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.o_proj.weight.data.clone()
 
         # Normalization weights
-        radix_model.model.layers[i].self_attn.q_norm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.q_norm.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.q_norm.weight.data.clone()
-        radix_model.model.layers[i].self_attn.k_norm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].self_attn.k_norm.weight.data = vanilla_model.model.layers[
             i
         ].self_attn.k_norm.weight.data.clone()
-        radix_model.model.layers[i].input_layernorm.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].input_layernorm.weight.data = vanilla_model.model.layers[
             i
         ].input_layernorm.weight.data.clone()
         radix_model.model.layers[
@@ -167,13 +186,19 @@ def copy_weights_from_vanilla_to_radix(vanilla_model, radix_model):
         ].post_attention_layernorm.weight.data.clone()
 
         # MLP weights
-        radix_model.model.layers[i].mlp.gate_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].mlp.gate_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.gate_proj.weight.data.clone()
-        radix_model.model.layers[i].mlp.up_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].mlp.up_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.up_proj.weight.data.clone()
-        radix_model.model.layers[i].mlp.down_proj.weight.data = vanilla_model.model.layers[
+        radix_model.model.layers[
+            i
+        ].mlp.down_proj.weight.data = vanilla_model.model.layers[
             i
         ].mlp.down_proj.weight.data.clone()
 
@@ -192,7 +217,9 @@ def compare_outputs(vanilla_logits, radix_logits):
 
     # Check shapes match
     if vanilla_logits_2d.shape != radix_logits.shape:
-        print(f"❌ Shape mismatch: vanilla {vanilla_logits_2d.shape} vs radix {radix_logits.shape}")
+        print(
+            f"❌ Shape mismatch: vanilla {vanilla_logits_2d.shape} vs radix {radix_logits.shape}"
+        )
         return False
 
     # Compute differences

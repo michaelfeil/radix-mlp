@@ -14,7 +14,7 @@ Key insights:
 
 import torch
 import numpy as np
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any
 import sys
 import os
 
@@ -135,8 +135,8 @@ class RadixModelComparator:
         print(f"Sequences: {sequences}")
 
         # Prepare inputs
-        input_ids, position_ids, cu_seq_lengths, max_seq_len = self.prepare_batchless_inputs(
-            sequences
+        input_ids, position_ids, cu_seq_lengths, max_seq_len = (
+            self.prepare_batchless_inputs(sequences)
         )
 
         print(f"Input shape: {input_ids.shape}")
@@ -230,8 +230,8 @@ class RadixModelComparator:
         print(f"Sequences: {sequences}")
 
         # Prepare inputs
-        input_ids, position_ids, cu_seq_lengths, max_seq_len = self.prepare_batchless_inputs(
-            sequences
+        input_ids, position_ids, cu_seq_lengths, max_seq_len = (
+            self.prepare_batchless_inputs(sequences)
         )
 
         # Move to GPU and enable gradients
@@ -297,7 +297,9 @@ class RadixModelComparator:
 
             print(f"Radix loss: {radix_loss.item():.6f}")
             print(f"Non-radix loss: {nonradix_loss.item():.6f}")
-            print(f"Loss difference: {abs(radix_loss.item() - nonradix_loss.item()):.8f}")
+            print(
+                f"Loss difference: {abs(radix_loss.item() - nonradix_loss.item()):.8f}"
+            )
 
             # Compare gradients
             grad_diffs = []
@@ -337,7 +339,9 @@ class RadixModelComparator:
                     print("\n🔍 Parameters with largest gradient differences:")
                     grad_diffs.sort(key=lambda x: x[1], reverse=True)
                     for name, max_diff, mean_diff in grad_diffs[:5]:
-                        print(f"  {name}: max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}")
+                        print(
+                            f"  {name}: max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}"
+                        )
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
@@ -404,7 +408,7 @@ class RadixIdenticalInferenceProof:
                 sequences, test_name + " (backward)"
             )
             results[test_name + "_backward"] = backward_result
-        
+
         # Generate summary
         self._generate_summary(results)
 
@@ -432,7 +436,9 @@ class RadixIdenticalInferenceProof:
             print(f"{test_name}: {status} (max_diff: {max_diff:.8f})")
 
         # Overall conclusion
-        print(f"\nOverall Results: {passed_tests}/{total_tests} comparison tests passed")
+        print(
+            f"\nOverall Results: {passed_tests}/{total_tests} comparison tests passed"
+        )
 
         if passed_tests == total_tests:
             print("🎉 PROOF COMPLETE: RadixMLP produces identical inference!")

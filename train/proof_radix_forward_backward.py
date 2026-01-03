@@ -8,9 +8,7 @@ to non-radix operations for both forward and backward passes.
 
 import torch
 import numpy as np
-from typing import List, Tuple, Dict, Any, Optional
-import sys
-import os
+from typing import List, Tuple, Dict, Any
 
 
 class SimpleRadixMLP(torch.nn.Module):
@@ -39,7 +37,9 @@ class SimpleRadixMLP(torch.nn.Module):
             # Compute in compact space
             gate_states = self.gate_proj(x_compact)
             up_states = self.up_proj(x_compact)
-            down_compact = self.down_proj(torch.nn.functional.silu(gate_states) * up_states)
+            down_compact = self.down_proj(
+                torch.nn.functional.silu(gate_states) * up_states
+            )
 
             # Scatter back to original space with proper gradients
             output = down_compact.index_select(0, scatter_indices)
@@ -59,7 +59,9 @@ class SimpleRadixProof:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.results = {}
 
-    def create_radix_indices(self, sequences: List[List[int]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def create_radix_indices(
+        self, sequences: List[List[int]]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Create correct radix indices for testing."""
         # For this simple test, we'll create identity indices (no actual radix)
         # This ensures the radix and non-radix paths should be identical
@@ -77,7 +79,9 @@ class SimpleRadixProof:
 
         return fold_gather, scatter_indices
 
-    def test_forward_pass(self, sequences: List[List[int]], test_name: str) -> Dict[str, Any]:
+    def test_forward_pass(
+        self, sequences: List[List[int]], test_name: str
+    ) -> Dict[str, Any]:
         """Test forward pass equality between radix and non-radix."""
         print(f"\n=== Forward Pass Test: {test_name} ===")
         print(f"Sequences: {sequences}")
@@ -119,7 +123,9 @@ class SimpleRadixProof:
                 nonradix_output = mlp(x, fold_gather=None, scatter_indices=None)
 
                 # Radix forward pass
-                radix_output = mlp(x, fold_gather=fold_gather, scatter_indices=scatter_indices)
+                radix_output = mlp(
+                    x, fold_gather=fold_gather, scatter_indices=scatter_indices
+                )
 
                 print(f"Non-radix output shape: {nonradix_output.shape}")
                 print(f"Radix output shape: {radix_output.shape}")
@@ -132,7 +138,9 @@ class SimpleRadixProof:
                 result["max_diff"] = max_diff
                 result["mean_diff"] = mean_diff
 
-                are_close = torch.allclose(nonradix_output, radix_output, rtol=1e-5, atol=1e-5)
+                are_close = torch.allclose(
+                    nonradix_output, radix_output, rtol=1e-5, atol=1e-5
+                )
                 result["are_close"] = are_close
 
                 print(f"Max difference: {max_diff:.8f}")
@@ -145,7 +153,9 @@ class SimpleRadixProof:
                     print("❌ FAIL: Forward outputs differ!")
 
                     # Show some differences
-                    print("\n🔍 Example differences (first 3 positions, first 5 features):")
+                    print(
+                        "\n🔍 Example differences (first 3 positions, first 5 features):"
+                    )
                     for pos in range(min(3, nonradix_output.shape[0])):
                         for feat in range(min(5, nonradix_output.shape[1])):
                             nonradix_val = nonradix_output[pos, feat].item()
@@ -165,70 +175,78 @@ class SimpleRadixProof:
 
         return result
 
-    def test_backward_pass(self, sequences: List[List[int]], test_name: str) -> Dict[str, Any]:
+    def test_backward_pass(
+        self, sequences: List[List[int]], test_name: str
+    ) -> Dict[str, Any]:
         """Test backward pass gradient equality between radix and non-radix."""
         print(f"\n=== Backward Pass Test: {test_name} ===")
         print(f"Sequences: {sequences}")
-        
+
         # Create test data
         all_tokens = []
         for seq in sequences:
             all_tokens.extend(seq)
-        
+
         input_size = len(all_tokens)
         hidden_size = 256
-        
+
         # Create radix indices
         fold_gather, scatter_indices = self.create_radix_indices(sequences)
-        
+
         result = {
             "test_name": test_name,
             "sequences": sequences,
             "max_grad_diff": None,
             "mean_grad_diff": None,
             "gradients_close": False,
-            "error": None
+            "error": None,
         }
-        
+
         try:
             # Create single MLP and single input for fair comparison
             mlp = SimpleRadixMLP(hidden_size, 512).to(self.device)
-            x = torch.randn(input_size, hidden_size, device=self.device, requires_grad=True)
-            
+            x = torch.randn(
+                input_size, hidden_size, device=self.device, requires_grad=True
+            )
+
             # Test non-radix gradients first
             mlp.zero_grad()
             x.grad = None
-            
+
             nonradix_output = mlp(x, fold_gather=None, scatter_indices=None)
             nonradix_loss = nonradix_output.sum()
             nonradix_loss.backward()
-            
+
             # Store non-radix gradients
             nonradix_grads = {}
             for name, param in mlp.named_parameters():
                 if param.grad is not None:
                     nonradix_grads[name] = param.grad.detach().clone()
             x_grad_nonradix = x.grad.detach().clone() if x.grad is not None else None
-            
+
             # Test radix gradients with same model and input
             mlp.zero_grad()
             x.grad = None
-            
-            radix_output = mlp(x, fold_gather=fold_gather, scatter_indices=scatter_indices)
+
+            radix_output = mlp(
+                x, fold_gather=fold_gather, scatter_indices=scatter_indices
+            )
             radix_loss = radix_output.sum()
             radix_loss.backward()
-            
+
             # Store radix gradients
             radix_grads = {}
             for name, param in mlp.named_parameters():
                 if param.grad is not None:
                     radix_grads[name] = param.grad.detach().clone()
             x_grad_radix = x.grad.detach().clone() if x.grad is not None else None
-            
+
             print(f"Non-radix loss: {nonradix_loss.item():.6f}")
             print(f"Radix loss: {radix_loss.item():.6f}")
-            print(f"Loss difference: {abs(nonradix_loss.item() - radix_loss.item()):.8f}")
-            
+            print(
+                f"Loss difference: {abs(nonradix_loss.item() - radix_loss.item()):.8f}"
+            )
+
             # Compare gradients
             grad_diffs = []
             for name in nonradix_grads:
@@ -237,7 +255,7 @@ class SimpleRadixProof:
                     max_diff = diff.max().item()
                     mean_diff = diff.mean().item()
                     grad_diffs.append((name, max_diff, mean_diff))
-            
+
             # Also compare input gradients
             if x_grad_nonradix is not None and x_grad_radix is not None:
                 input_grad_diff = torch.abs(x_grad_nonradix - x_grad_radix)
@@ -245,41 +263,46 @@ class SimpleRadixProof:
                 input_mean_diff = input_grad_diff.mean().item()
                 grad_diffs.append(("input_grad", input_max_diff, input_mean_diff))
                 print(f"Input gradient max diff: {input_max_diff:.8f}")
-            
+
             if grad_diffs:
                 max_grad_diff = max(d[1] for d in grad_diffs)
                 mean_grad_diff = np.mean([d[2] for d in grad_diffs])
-                
+
                 result["max_grad_diff"] = max_grad_diff
                 result["mean_grad_diff"] = mean_grad_diff
-                
+
                 gradients_close = all(d[1] < 1e-5 for d in grad_diffs)
                 result["gradients_close"] = gradients_close
-                
+
                 print(f"Max gradient difference: {max_grad_diff:.8f}")
                 print(f"Mean gradient difference: {mean_grad_diff:.8f}")
                 print(f"Gradients close: {gradients_close}")
-                
+
                 if gradients_close:
                     print("✅ PASS: Backward gradients are identical!")
                 else:
                     print("❌ FAIL: Backward gradients differ!")
-                    
+
                     # Show parameters with largest differences
                     print("\n🔍 Parameters with largest gradient differences:")
                     grad_diffs.sort(key=lambda x: x[1], reverse=True)
                     for name, max_diff, mean_diff in grad_diffs[:5]:
-                        print(f"  {name}: max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}")
-        
+                        print(
+                            f"  {name}: max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}"
+                        )
+
         except Exception as e:
             result["error"] = str(e)
             print(f"❌ ERROR: {e}")
             import traceback
+
             traceback.print_exc()
-        
+
         return result
-    
-    def test_gradient_flow(self, sequences: List[List[int]], test_name: str) -> Dict[str, Any]:
+
+    def test_gradient_flow(
+        self, sequences: List[List[int]], test_name: str
+    ) -> Dict[str, Any]:
         """Test that gradients flow properly through radix operations."""
         print(f"\n=== Gradient Flow Test: {test_name} ===")
         print(f"Sequences: {sequences}")
@@ -304,7 +327,9 @@ class SimpleRadixProof:
 
         try:
             mlp = SimpleRadixMLP(hidden_size, 512).to(self.device)
-            x = torch.randn(input_size, hidden_size, device=self.device, requires_grad=True)
+            x = torch.randn(
+                input_size, hidden_size, device=self.device, requires_grad=True
+            )
 
             # Forward pass with radix
             output = mlp(x)
@@ -399,7 +424,9 @@ class SimpleRadixProof:
 
         return self.results
 
-    def _generate_summary(self, forward_results, backward_results, gradient_flow_results):
+    def _generate_summary(
+        self, forward_results, backward_results, gradient_flow_results
+    ):
         """Generate proof summary."""
         print("\n" + "=" * 60)
         print("📊 SIMPLE PROOF SUMMARY")
@@ -414,7 +441,9 @@ class SimpleRadixProof:
             status = "✅ PASS" if result["are_close"] else "❌ FAIL"
             if result["error"]:
                 status = "❌ ERROR"
-            print(f"  {result['test_name']}: {status} (max_diff: {result['max_diff']:.6f})")
+            print(
+                f"  {result['test_name']}: {status} (max_diff: {result['max_diff']:.6f})"
+            )
 
         # Backward pass summary
         backward_passed = sum(1 for r in backward_results if r["gradients_close"])
@@ -430,9 +459,13 @@ class SimpleRadixProof:
             )
 
         # Gradient flow summary
-        gradient_flow_passed = sum(1 for r in gradient_flow_results if r["gradient_flow_ok"])
+        gradient_flow_passed = sum(
+            1 for r in gradient_flow_results if r["gradient_flow_ok"]
+        )
         gradient_flow_total = len(gradient_flow_results)
-        print(f"\nGradient Flow: {gradient_flow_passed}/{gradient_flow_total} tests passed")
+        print(
+            f"\nGradient Flow: {gradient_flow_passed}/{gradient_flow_total} tests passed"
+        )
 
         for result in gradient_flow_results:
             status = "✅ PASS" if result["gradient_flow_ok"] else "❌ FAIL"

@@ -12,8 +12,7 @@ Design principles based on Rust ground truth:
 - needs to run on CUDA. CPU is not supported due to varlen dependency. and fp16/bf16 only.
 """
 
-from typing import Optional, Union, Tuple, List, Any
-import math
+from typing import Optional, Tuple, List, Any
 
 import torch
 from torch import nn
@@ -21,8 +20,6 @@ from torch.nn import functional as F
 
 # both RadixMLP and flash attention are REQUIRED dependencies
 
-import sys
-import os
 
 # required deps
 from radix_mlp.torch import compute_fold_and_scatter_torch
@@ -79,7 +76,9 @@ class Qwen3Config:
         self.sliding_window = sliding_window
         self.layer_types = layer_types or ["full_attention"] * num_hidden_layers
         self._attn_implementation = "flash_attention_2"  # Force flash attention
-        self.head_dim = head_dim if head_dim is not None else hidden_size // num_attention_heads
+        self.head_dim = (
+            head_dim if head_dim is not None else hidden_size // num_attention_heads
+        )
 
         # Set rope_parameters for compatibility
         self.rope_parameters = {"rope_type": "default", "rope_theta": rope_theta}
@@ -155,7 +154,9 @@ class Qwen3RotaryEmbedding(nn.Module):
         inv_freq = 1.0 / (
             base
             ** (
-                torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float)
+                torch.arange(0, dim, 2, dtype=torch.int64).to(
+                    device=device, dtype=torch.float
+                )
                 / dim
             )
         )
@@ -175,11 +176,6 @@ class Qwen3RotaryEmbedding(nn.Module):
         inv_freq_expanded = self.inv_freq.float().to(position_ids.device)
         position_ids_expanded = position_ids.float().unsqueeze(-1)
 
-        device_type = (
-            position_ids.device.type
-            if isinstance(position_ids.device.type, str) and position_ids.device.type != "mps"
-            else "cpu"
-        )
         with torch.cuda.amp.autocast(enabled=False):  # Force float32
             freqs = (
                 position_ids_expanded.float() @ inv_freq_expanded.float().unsqueeze(0)
@@ -255,13 +251,17 @@ class RadixMLPQwen3Attention(nn.Module):
 
     def __init__(self, config: RadixMLPQwen3Config, layer_idx: int):
         super().__init__()
-        self.layer_type = config.layer_types[layer_idx] if hasattr(config, "layer_types") else None
+        self.layer_type = (
+            config.layer_types[layer_idx] if hasattr(config, "layer_types") else None
+        )
         self.config = config
         self.layer_idx = layer_idx
         self.head_dim = getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
         )
-        self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
+        self.num_key_value_groups = (
+            config.num_attention_heads // config.num_key_value_heads
+        )
         self.scaling = self.head_dim**-0.5
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
@@ -308,8 +308,12 @@ class RadixMLPQwen3Attention(nn.Module):
         """Variable length attention with radix folding/scattering."""
         compact_num_tokens = hidden_states.shape[0]
         q_compact = self.q_proj(hidden_states)  # [compact_tokens, num_heads * head_dim]
-        k_compact = self.k_proj(hidden_states)  # [compact_tokens, num_kv_heads * head_dim]
-        v_compact = self.v_proj(hidden_states)  # [compact_tokens, num_kv_heads * head_dim]
+        k_compact = self.k_proj(
+            hidden_states
+        )  # [compact_tokens, num_kv_heads * head_dim]
+        v_compact = self.v_proj(
+            hidden_states
+        )  # [compact_tokens, num_kv_heads * head_dim]
 
         q_compact = q_compact.view(
             compact_num_tokens, self.config.num_attention_heads, self.head_dim
@@ -325,11 +329,16 @@ class RadixMLPQwen3Attention(nn.Module):
         k_compact = self.k_norm(k_compact.transpose(0, 1)).transpose(0, 1)
 
         # Apply rotary embeddings
-        q_compact = apply_rotary_pos_emb_single(q_compact, cos, sin) # cos and sin are [compact_tokens, head_dim//2]
+        q_compact = apply_rotary_pos_emb_single(
+            q_compact, cos, sin
+        )  # cos and sin are [compact_tokens, head_dim//2]
         k_compact = apply_rotary_pos_emb_single(k_compact, cos, sin)
 
         # Following Rust implementation: scatter to ORIGINAL space for attention
-        skip_radix = scatter_indices.shape[0] == fold_gather.shape[0] and (scatter_indices == fold_gather).all().item()
+        skip_radix = (
+            scatter_indices.shape[0] == fold_gather.shape[0]
+            and (scatter_indices == fold_gather).all().item()
+        )
         if skip_radix:
             q = q_compact
             k = k_compact
@@ -344,7 +353,7 @@ class RadixMLPQwen3Attention(nn.Module):
             v = torch.index_select(
                 v_compact, dim=0, index=scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
-        q_dtype = q.dtype   
+        q_dtype = q.dtype
         if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
             q = q.to(torch.float16)
             k = k.to(torch.float16)
@@ -397,9 +406,13 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         self.self_attn = RadixMLPQwen3Attention(config=config, layer_idx=layer_idx)
         self.mlp = RadixMLPQwen3MLP(config)
         self.input_layernorm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = Qwen3RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
         self.attention_type = (
-            config.layer_types[layer_idx] if hasattr(config, "layer_types") else "full_attention"
+            config.layer_types[layer_idx]
+            if hasattr(config, "layer_types")
+            else "full_attention"
         )
 
     def forward(
@@ -446,7 +459,9 @@ class RadixMLPQwen3Model(nn.Module):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
         self.layers = nn.ModuleList(
             [
                 RadixMLPQwen3DecoderLayer(config, layer_idx)
@@ -516,19 +531,28 @@ class RadixMLPQwen3Model(nn.Module):
         fold_gather, scatter_indices = self._prepare_radix_indices(
             input_ids, position_ids, cu_seq_lengths, use_radix_mlp=use_radix_mlp
         )
-        skip_radix = scatter_indices.shape[0] == fold_gather.shape[0] and (scatter_indices == fold_gather).all().item()
-        
+        skip_radix = (
+            scatter_indices.shape[0] == fold_gather.shape[0]
+            and (scatter_indices == fold_gather).all().item()
+        )
+
         if skip_radix:
             input_ids_compact = input_ids
             position_ids_compact = position_ids
         else:
-            input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather) 
-            position_ids_compact = torch.index_select(position_ids, dim=0, index=fold_gather)
+            input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather)
+            position_ids_compact = torch.index_select(
+                position_ids, dim=0, index=fold_gather
+            )
         # Embed tokens
-        hidden_states = self.embed_tokens(input_ids_compact)  # [num_tokens, hidden_size]
+        hidden_states = self.embed_tokens(
+            input_ids_compact
+        )  # [num_tokens, hidden_size]
 
         # Generate rotary embeddings
-        cos, sin = self.rotary_emb(position_ids_compact)  # [num_tokens, head_dim//2] each
+        cos, sin = self.rotary_emb(
+            position_ids_compact
+        )  # [num_tokens, head_dim//2] each
 
         # Prepare radix indices
 
@@ -548,7 +572,9 @@ class RadixMLPQwen3Model(nn.Module):
 
         # Following Rust: scatter final outputs back to original layout
         if use_radix_mlp and not skip_radix:
-            hidden_states = torch.index_select(hidden_states, dim=0, index=scatter_indices)
+            hidden_states = torch.index_select(
+                hidden_states, dim=0, index=scatter_indices
+            )
 
         return hidden_states
 
