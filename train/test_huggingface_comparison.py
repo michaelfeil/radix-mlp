@@ -59,30 +59,15 @@ def test_single_sequence_comparison():
 
         # Create radix config matching the loaded model
         print("⚙️ Creating radix config...")
-        radix_config = RadixMLPQwen3Config(
-            vocab_size=vanilla_model.config.vocab_size,
-            hidden_size=vanilla_model.config.hidden_size,
-            intermediate_size=vanilla_model.config.intermediate_size,
-            num_hidden_layers=vanilla_model.config.num_hidden_layers,
-            num_attention_heads=vanilla_model.config.num_attention_heads,
-            num_key_value_heads=vanilla_model.config.num_key_value_heads,
-            hidden_act=vanilla_model.config.hidden_act,
-            max_position_embeddings=vanilla_model.config.max_position_embeddings,
-            rms_norm_eps=vanilla_model.config.rms_norm_eps,
-            head_dim=vanilla_model.config.head_dim,  # Add head_dim
-            use_radix_mlp=True,  # Enable radix
-            use_flash_attn_varlen=True,
-        )
 
         # Create radix model
         print("📦 Creating radix model...")
-        radix_model = RadixMLPQwen3ForCausalLM(radix_config)
+        radix_model = RadixMLPQwen3ForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
         radix_model.eval()
         radix_model = radix_model.to(torch.float16)
 
         # Copy weights from vanilla to radix model
         print("🔄 Copying weights from vanilla to radix...")
-        copy_weights_from_vanilla_to_radix(vanilla_model, radix_model)
         radix_model = radix_model.to("cuda")
 
         # Prepare radix inputs (batchless format)
