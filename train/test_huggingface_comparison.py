@@ -36,7 +36,7 @@ def test_single_sequence_comparison():
         # Load vanilla model and tokenizer
         print("📦 Loading vanilla transformers model...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        vanilla_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16)
+        vanilla_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, attn_implementation="flash_attention_2")
         vanilla_model.eval()
         vanilla_model = vanilla_model.to("cuda")
 
