@@ -21,9 +21,6 @@ import os
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Import radix implementation
-from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
-
 
 # Enable CUDA determinism for better precision
 def setup_cuda_determinism():
@@ -57,7 +54,8 @@ def setup_cuda_determinism():
 
 # Setup determinism at import
 setup_cuda_determinism()
-
+# Import radix implementation
+from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
 
 class TestSequenceGenerator:
     """Generate test sequences for radix proof."""

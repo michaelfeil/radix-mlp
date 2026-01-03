@@ -108,15 +108,32 @@ def rotate_half(x):
 
 
 def index_select_scatter_gather(
-    input_t: torch.Tensor, indices: torch.Tensor
+    input_t: torch.Tensor, indices: torch.Tensor, impl=2
 ) -> torch.Tensor:
     """Helper function to index select using scatter/gather indices."""
-    dtype, device = input_t.dtype, input_t.device
-    input_t = input_t.contiguous().cpu()
-    indices = indices.contiguous().cpu()
-    result = torch.index_select(input_t, dim=0, index=indices)
-    return result.to(dtype=dtype, device=device)
+    if impl == 0:
+        return input_t.index_select(0, indices)
+    elif impl == 1:
+        dtype, device = input_t.dtype, input_t.device
+        input_t = input_t.contiguous().cpu()
+        indices = indices.contiguous().cpu()
+        result = torch.index_select(input_t, dim=0, index=indices)
+        return result.to(dtype=dtype, device=device)
+    else:
+        return IndexSelectBackward.apply(input_t, indices)
 
+class IndexSelectBackward(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input_t: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(indices, torch.tensor(input_t.size(0)))
+        return input_t.index_select(0, indices)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, None]:
+        indices, original_size = ctx.saved_tensors
+        grad_input = torch.zeros(original_size.item(), *grad_output.shape[1:], device=grad_output.device, dtype=grad_output.dtype)
+        grad_input.index_add_(0, indices, grad_output)
+        return grad_input, None
 
 def apply_rotary_pos_emb_single(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
