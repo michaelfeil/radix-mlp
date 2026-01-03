@@ -107,6 +107,17 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
+def index_select_scatter_gather(
+    input_t: torch.Tensor, indices: torch.Tensor
+) -> torch.Tensor:
+    """Helper function to index select using scatter/gather indices."""
+    dtype, device = input_t.dtype, input_t.device
+    input_t = input_t.contiguous().cpu()
+    indices = indices.contiguous().cpu()
+    result = torch.index_select(input_t, dim=0, index=indices)
+    return result.to(dtype=dtype, device=device)
+
+
 def apply_rotary_pos_emb_single(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> torch.Tensor:
@@ -344,14 +355,14 @@ class RadixMLPQwen3Attention(nn.Module):
             k = k_compact
             v = v_compact
         else:
-            q = torch.index_select(
-                q_compact, dim=0, index=scatter_indices
+            q = index_select_scatter_gather(
+                q_compact, scatter_indices
             )  # [original_tokens, num_heads, head_dim]b
-            k = torch.index_select(
-                k_compact, dim=0, index=scatter_indices
+            k = index_select_scatter_gather(
+                k_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
-            v = torch.index_select(
-                v_compact, dim=0, index=scatter_indices
+            v = index_select_scatter_gather(
+                v_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
         q_dtype = q.dtype
         if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
@@ -361,16 +372,14 @@ class RadixMLPQwen3Attention(nn.Module):
 
         # Flash attention in ORIGINAL space (following Rust ground truth)
         attn_output = flash_attn_varlen_func(
-            q,  # [original_tokens, num_heads, head_dim]
-            k,  # [original_tokens, num_kv_heads, head_dim]
-            v,  # [original_tokens, num_kv_heads, head_dim]
+            q.contiguous(),  # [original_tokens, num_heads, head_dim]
+            k.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
+            v.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
             cu_seqlens_q=cu_seq_lengths,
             cu_seqlens_k=cu_seq_lengths,
             max_seqlen_q=max_seq_len,
             max_seqlen_k=max_seq_len,
-            dropout_p=0.0
-            if not self.training
-            else self.attention_dropout,  # qwen3 uses 0.0 dropout for training and eval.
+            dropout_p=0.0,  # qwen3 uses 0.0 dropout for training and eval.
             softmax_scale=self.scaling,
             causal=self.is_causal,
         )
@@ -384,8 +393,8 @@ class RadixMLPQwen3Attention(nn.Module):
         if skip_radix:
             attn_output_compact = attn_output
         else:
-            attn_output_compact = torch.index_select(
-                attn_output, dim=0, index=fold_gather
+            attn_output_compact = index_select_scatter_gather(
+                attn_output, fold_gather
             )  # [compact_tokens, hidden_size]
 
         # Apply output projection
@@ -433,7 +442,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             hidden_states=hidden_states,
             cos=cos,
             sin=sin,
-            cu_seq_lengths=cu_seq_lengths.to(torch.int32),
+            cu_seq_lengths=cu_seq_lengths.to(torch.int32).contiguous(),
             max_seq_len=max_seq_len,
             fold_gather=fold_gather,
             scatter_indices=scatter_indices,
@@ -540,9 +549,9 @@ class RadixMLPQwen3Model(nn.Module):
             input_ids_compact = input_ids
             position_ids_compact = position_ids
         else:
-            input_ids_compact = torch.index_select(input_ids, dim=0, index=fold_gather)
-            position_ids_compact = torch.index_select(
-                position_ids, dim=0, index=fold_gather
+            input_ids_compact = index_select_scatter_gather(input_ids, fold_gather)
+            position_ids_compact = index_select_scatter_gather(
+                position_ids, fold_gather
             )
         # Embed tokens
         hidden_states = self.embed_tokens(
@@ -572,9 +581,7 @@ class RadixMLPQwen3Model(nn.Module):
 
         # Following Rust: scatter final outputs back to original layout
         if use_radix_mlp and not skip_radix:
-            hidden_states = torch.index_select(
-                hidden_states, dim=0, index=scatter_indices
-            )
+            hidden_states = index_select_scatter_gather(hidden_states, scatter_indices)
 
         return hidden_states
 

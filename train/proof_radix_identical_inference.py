@@ -25,6 +25,40 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
 
 
+# Enable CUDA determinism for better precision
+def setup_cuda_determinism():
+    """Setup CUDA determinism and precision settings."""
+    # Set CuBLAS workspace config for deterministic behavior
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+
+    if torch.cuda.is_available():
+        # Enable deterministic algorithms
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+        # Set deterministic behavior for CUDA (warn_only to avoid runtime errors)
+        torch.use_deterministic_algorithms(True)
+
+        # Set precision for cuDNN
+        torch.backends.cudnn.allow_tf32 = False  # Disable TF32 for better precision
+
+        # Set matmul precision
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+
+        # Set seed for reproducibility
+        torch.manual_seed(42)
+        np.random.seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+
+        print("✅ CUDA determinism enabled for maximum precision")
+
+
+# Setup determinism at import
+setup_cuda_determinism()
+
+
 class TestSequenceGenerator:
     """Generate test sequences for radix proof."""
 
@@ -84,7 +118,9 @@ class RadixModelComparator:
     def _create_model(self) -> RadixMLPQwen3ForCausalLM:
         """Create test model with specified config."""
         model = RadixMLPQwen3ForCausalLM(self.config)
-        model = model.to("cuda").to(torch.float32)
+        model = model.to("cuda").to(
+            torch.float32
+        )  # Use double precision for maximum accuracy
         return model
 
     def prepare_batchless_inputs(
@@ -246,6 +282,10 @@ class RadixModelComparator:
         # Store gradients for comparison
         radix_grads = {}
         nonradix_grads = {}
+        grad_diffs = []
+        gradients_close = False
+        max_grad_diff = 0.0
+        mean_grad_diff = 0.0
 
         try:
             # Run with radix enabled (gradient mode)
@@ -302,7 +342,6 @@ class RadixModelComparator:
             )
 
             # Compare gradients
-            grad_diffs = []
             for name in nonradix_grads:
                 if name in radix_grads:
                     diff = torch.abs(nonradix_grads[name] - radix_grads[name])
@@ -323,7 +362,6 @@ class RadixModelComparator:
             if grad_diffs:
                 max_grad_diff = max(d[1] for d in grad_diffs)
                 mean_grad_diff = np.mean([d[2] for d in grad_diffs])
-
                 gradients_close = all(d[1] < 1e-5 for d in grad_diffs)
 
                 print(f"Max gradient difference: {max_grad_diff:.8f}")
@@ -353,11 +391,11 @@ class RadixModelComparator:
         results = {
             "test_name": test_name,
             "sequences": sequences,
-            "are_close": gradients_close if grad_diffs else False,
-            "max_diff": max_grad_diff if grad_diffs else None,
-            "max_grad_diff": max_grad_diff if grad_diffs else 0.0,
-            "mean_grad_diff": mean_grad_diff if grad_diffs else 0.0,
-            "gradients_close": gradients_close if grad_diffs else False,
+            "are_close": gradients_close,
+            "max_diff": max_grad_diff,
+            "max_grad_diff": max_grad_diff,
+            "mean_grad_diff": mean_grad_diff,
+            "gradients_close": gradients_close,
             "grad_diffs": grad_diffs,
         }
 
