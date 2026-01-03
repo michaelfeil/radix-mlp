@@ -229,13 +229,11 @@ class RadixMLPQwen3Config(Qwen3Config):
 
     def __init__(
         self,
-        use_radix_mlp: bool = True,
-        radix_min_prefix_length: int = 4,
+        use_dummy_attn: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.use_radix_mlp = use_radix_mlp
-        self.radix_min_prefix_length = radix_min_prefix_length
+        self.use_dummy_attn = use_dummy_attn
 
 
 class RadixMLPQwen3MLP(nn.Module):
@@ -246,7 +244,6 @@ class RadixMLPQwen3MLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
-        self.use_radix_mlp = config.use_radix_mlp
 
         # Rust-style MLP: separate projections but concatenated during forward
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
@@ -381,39 +378,48 @@ class RadixMLPQwen3Attention(nn.Module):
             v = index_select_scatter_gather(
                 v_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
-        q_dtype = q.dtype
-        if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
-            q = q.to(torch.float16)
-            k = k.to(torch.float16)
-            v = v.to(torch.float16)
+        if not self.config.use_dummy_attn:
+            q_dtype = q.dtype
+            if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
+                q = q.to(torch.float16)
+                k = k.to(torch.float16)
+                v = v.to(torch.float16)
 
-        # Flash attention in ORIGINAL space (following Rust ground truth)
-        attn_output = flash_attn_varlen_func(
-            q.contiguous(),  # [original_tokens, num_heads, head_dim]
-            k.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
-            v.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
-            cu_seqlens_q=cu_seq_lengths,
-            cu_seqlens_k=cu_seq_lengths,
-            max_seqlen_q=max_seq_len,
-            max_seqlen_k=max_seq_len,
-            dropout_p=0.0,  # qwen3 uses 0.0 dropout for training and eval.
-            softmax_scale=self.scaling,
-            causal=self.is_causal,
-        )
-        if attn_output.dtype != q_dtype:
-            attn_output = attn_output.to(q_dtype)
+            # Flash attention in ORIGINAL space (following Rust ground truth)
+            attn_output = flash_attn_varlen_func(
+                q.contiguous(),  # [original_tokens, num_heads, head_dim]
+                k.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
+                v.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
+                cu_seqlens_q=cu_seq_lengths,
+                cu_seqlens_k=cu_seq_lengths,
+                max_seqlen_q=max_seq_len,
+                max_seqlen_k=max_seq_len,
+                dropout_p=0.0,  # qwen3 uses 0.0 dropout for training and eval.
+                softmax_scale=self.scaling,
+                causal=self.is_causal,
+            )
+            if attn_output.dtype != q_dtype:
+                attn_output = attn_output.to(q_dtype)
 
-        # Following Rust: fold back to COMPACT space before o_proj
-        attn_output = attn_output.view(
-            -1, self.config.num_attention_heads * self.head_dim
-        )  # [original_tokens, hidden_size]
+            # Following Rust: fold back to COMPACT space before o_proj
+            attn_output = attn_output.view(
+                -1, self.config.num_attention_heads * self.head_dim
+            )  # [original_tokens, hidden_size]
+        else:
+            # dummy operator instead of sequence mixing.
+            # k and v need to be expanded to match q's heads
+            attn_output = q + k.repeat_interleave(
+                self.num_key_value_groups, dim=1
+            ) + v.repeat_interleave(self.num_key_value_groups, dim=1)
+            attn_output = attn_output.view(
+                -1, self.config.num_attention_heads * self.head_dim
+            )  
         if skip_radix:
             attn_output_compact = attn_output
         else:
             attn_output_compact = index_select_scatter_gather(
                 attn_output, fold_gather
             )  # [compact_tokens, hidden_size]
-
         # Apply output projection
         attn_output_compact = self.o_proj(attn_output_compact)
 
@@ -427,7 +433,6 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
     def __init__(self, config: RadixMLPQwen3Config, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.use_radix_mlp = config.use_radix_mlp
 
         self.self_attn = RadixMLPQwen3Attention(config=config, layer_idx=layer_idx)
         self.mlp = RadixMLPQwen3MLP(config)
