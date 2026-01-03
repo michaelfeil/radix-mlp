@@ -122,6 +122,7 @@ def index_select_scatter_gather(
     else:
         return IndexSelectBackward.apply(input_t, indices)
 
+
 class IndexSelectBackward(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_t: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
@@ -131,9 +132,15 @@ class IndexSelectBackward(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, None]:
         indices, original_size = ctx.saved_tensors
-        grad_input = torch.zeros(original_size.item(), *grad_output.shape[1:], device=grad_output.device, dtype=grad_output.dtype)
+        grad_input = torch.zeros(
+            original_size.item(),
+            *grad_output.shape[1:],
+            device=grad_output.device,
+            dtype=grad_output.dtype,
+        )
         grad_input.index_add_(0, indices, grad_output)
         return grad_input, None
+
 
 def apply_rotary_pos_emb_single(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
@@ -407,12 +414,14 @@ class RadixMLPQwen3Attention(nn.Module):
         else:
             # dummy operator instead of sequence mixing.
             # k and v need to be expanded to match q's heads
-            attn_output = q + k.repeat_interleave(
-                self.num_key_value_groups, dim=1
-            ) + v.repeat_interleave(self.num_key_value_groups, dim=1)
+            attn_output = (
+                q
+                + k.repeat_interleave(self.num_key_value_groups, dim=1)
+                + v.repeat_interleave(self.num_key_value_groups, dim=1)
+            )
             attn_output = attn_output.view(
                 -1, self.config.num_attention_heads * self.head_dim
-            )  
+            )
         if skip_radix:
             attn_output_compact = attn_output
         else:
@@ -654,7 +663,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             cu_seq_lengths=cu_seq_lengths,
             max_seq_len=max_seq_len,
             use_radix_mlp=use_radix_mlp,
-            use_dummy_attn=False,
+            use_dummy_attn=use_dummy_attn,
         )
 
         # Compute logits

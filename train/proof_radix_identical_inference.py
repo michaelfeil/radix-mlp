@@ -17,6 +17,7 @@ import numpy as np
 from typing import List, Tuple, Dict, Any
 import sys
 import os
+import argparse
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -56,6 +57,7 @@ def setup_cuda_determinism():
 setup_cuda_determinism()
 # Import radix implementation
 from qwen3_radix_torch_varlen import RadixMLPQwen3ForCausalLM, RadixMLPQwen3Config
+
 
 class TestSequenceGenerator:
     """Generate test sequences for radix proof."""
@@ -109,8 +111,9 @@ class TestSequenceGenerator:
 class RadixModelComparator:
     """Compare radix vs non-radix model outputs."""
 
-    def __init__(self, config: RadixMLPQwen3Config):
+    def __init__(self, config: RadixMLPQwen3Config, use_dummy_attn: bool = False):
         self.config = config
+        self.use_dummy_attn = use_dummy_attn
         self.model = self._create_model()
 
     def _create_model(self) -> RadixMLPQwen3ForCausalLM:
@@ -185,6 +188,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=True,
+                use_dummy_attn=self.use_dummy_attn,
             ).logits.cpu()
 
             # Run with radix disabled
@@ -194,6 +198,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=False,
+                use_dummy_attn=self.use_dummy_attn,
             ).logits.cpu()
 
         # Compare outputs
@@ -294,6 +299,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=True,
+                use_dummy_attn=self.use_dummy_attn,
             ).logits
 
             # Create a simple loss (sum of all logits)
@@ -318,6 +324,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=False,
+                use_dummy_attn=self.use_dummy_attn,
             ).logits
 
             # Create a simple loss (sum of all logits)
@@ -406,6 +413,7 @@ class RadixIdenticalInferenceProof:
     def __init__(self):
         self.config = self._create_test_config()
         self.comparator = RadixModelComparator(self.config)
+        self.comparator_dummy = RadixModelComparator(self.config, use_dummy_attn=True)
         self.test_generator = TestSequenceGenerator()
 
     def _create_test_config(self) -> RadixMLPQwen3Config:
@@ -420,8 +428,6 @@ class RadixIdenticalInferenceProof:
             hidden_act="silu",
             max_position_embeddings=128,
             rms_norm_eps=1e-5,
-            use_radix_mlp=True,
-            use_flash_attn_varlen=True,
         )
 
     def run_all_proofs(self) -> Dict[str, Any]:
@@ -439,11 +445,18 @@ class RadixIdenticalInferenceProof:
         for test_name, sequences in test_cases.items():
             result = self.comparator.compare_radix_vs_nonradix(sequences, test_name)
             results[test_name] = result
-            # Run backward comparison ALL LAYERS
+            # Run backward comparison without dummy attention
             backward_result = self.comparator.compare_radix_vs_nonradix_backward(
-                sequences, test_name + " (backward)"
+                sequences, test_name + "_backward"
             )
             results[test_name + "_backward"] = backward_result
+            # Run backward comparison with dummy attention
+            backward_result_dummy = (
+                self.comparator_dummy.compare_radix_vs_nonradix_backward(
+                    sequences, test_name + "_backward_dummy_attn"
+                )
+            )
+            results[test_name + "_backward_dummy_attn"] = backward_result_dummy
 
         # Generate summary
         self._generate_summary(results)
@@ -461,15 +474,40 @@ class RadixIdenticalInferenceProof:
         passed_tests = 0
         total_tests = len(comparison_tests)
 
+        # Group tests by base name for clearer comparison
+        base_tests = set()
         for test_name in comparison_tests:
-            if results[test_name]["are_close"]:
-                passed_tests += 1
-                status = "✅ PASS"
-            else:
-                status = "❌ FAIL"
+            if "_backward" in test_name:
+                base_name = test_name.replace("_backward", "").replace(
+                    "_dummy_attn", ""
+                )
+                base_tests.add(base_name)
+            elif "_backward_dummy_attn" not in test_name:
+                base_tests.add(test_name)
 
-            max_diff = results[test_name]["max_diff"]
-            print(f"{test_name}: {status} (max_diff: {max_diff:.8f})")
+        for base_name in sorted(base_tests):
+            # Forward pass
+            if base_name in results:
+                result = results[base_name]
+                status = "✅ PASS" if result["are_close"] else "❌ FAIL"
+                max_diff = result["max_diff"]
+                print(f"{base_name}: {status} (max_diff: {max_diff:.8f})")
+
+            # Backward pass without dummy attention
+            backward_key = base_name + "_backward"
+            if backward_key in results:
+                result = results[backward_key]
+                status = "✅ PASS" if result["are_close"] else "❌ FAIL"
+                max_diff = result["max_diff"]
+                print(f"{backward_key}: {status} (max_diff: {max_diff:.8f})")
+
+            # Backward pass with dummy attention
+            backward_dummy_key = base_name + "_backward_dummy_attn"
+            if backward_dummy_key in results:
+                result = results[backward_dummy_key]
+                status = "✅ PASS" if result["are_close"] else "❌ FAIL"
+                max_diff = result["max_diff"]
+                print(f"{backward_dummy_key}: {status} (max_diff: {max_diff:.8f})")
 
         # Overall conclusion
         print(
