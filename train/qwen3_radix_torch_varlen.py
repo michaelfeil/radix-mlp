@@ -229,11 +229,9 @@ class RadixMLPQwen3Config(Qwen3Config):
 
     def __init__(
         self,
-        use_dummy_attn: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.use_dummy_attn = use_dummy_attn
 
 
 class RadixMLPQwen3MLP(nn.Module):
@@ -329,6 +327,7 @@ class RadixMLPQwen3Attention(nn.Module):
         max_seq_len: int,
         fold_gather: torch.Tensor,
         scatter_indices: torch.Tensor,
+        use_dummy_attn: bool = False,
     ) -> torch.Tensor:
         """Variable length attention with radix folding/scattering."""
         compact_num_tokens = hidden_states.shape[0]
@@ -378,7 +377,7 @@ class RadixMLPQwen3Attention(nn.Module):
             v = index_select_scatter_gather(
                 v_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
-        if not self.config.use_dummy_attn:
+        if not use_dummy_attn:
             q_dtype = q.dtype
             if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
                 q = q.to(torch.float16)
@@ -455,6 +454,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         max_seq_len: int,
         fold_gather: Optional[torch.Tensor] = None,
         scatter_indices: Optional[torch.Tensor] = None,
+        use_dummy_attn: bool = False,
     ) -> torch.Tensor:
         """Forward pass with radix and varlen support."""
         # Self Attention
@@ -468,6 +468,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             max_seq_len=max_seq_len,
             fold_gather=fold_gather,
             scatter_indices=scatter_indices,
+            use_dummy_attn=use_dummy_attn,
         )
         hidden_states = residual + hidden_states
 
@@ -546,6 +547,7 @@ class RadixMLPQwen3Model(nn.Module):
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
         use_radix_mlp: bool = True,
+        use_dummy_attn: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass with radix and varlen support.
@@ -597,6 +599,7 @@ class RadixMLPQwen3Model(nn.Module):
                 max_seq_len=max_seq_len,
                 fold_gather=fold_gather,
                 scatter_indices=scatter_indices,
+                use_dummy_attn=use_dummy_attn,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -628,6 +631,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
         max_seq_len: int,
         labels: Optional[torch.Tensor] = None,
         use_radix_mlp: bool = True,
+        use_dummy_attn: bool = False,
     ) -> Any:
         """
         Forward pass for causal language modeling.
@@ -638,6 +642,8 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             cu_seq_lengths: [batch_size + 1] cumulative sequence lengths
             max_seq_len: Maximum sequence length in batch
             labels: Optional [num_tokens] labels for loss computation
+            use_radix_mlp: Whether to use RadixMLP folding/scattering
+            use_dummy_attn: Whether to use dummy attention (for testing)
 
         Returns:
             Output with loss and logits
@@ -648,6 +654,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             cu_seq_lengths=cu_seq_lengths,
             max_seq_len=max_seq_len,
             use_radix_mlp=use_radix_mlp,
+            use_dummy_attn=False,
         )
 
         # Compute logits
