@@ -26,6 +26,197 @@ from radix_mlp.torch import compute_fold_and_scatter_torch
 from flash_attn import flash_attn_varlen_func
 
 
+def _get_attn_implementation_config(attn_implementation: str) -> Tuple[bool, bool]:
+    """
+    Get attention implementation configuration from attn_implementation string.
+
+    Args:
+        attn_implementation: String specifying attention implementation
+
+    Returns:
+        Tuple of (use_flash_attn, force_fp32_sdpa)
+    """
+    if attn_implementation == "flash_attention_2":
+        return True, False
+    elif attn_implementation == "sdpa":
+        return False, True
+    elif attn_implementation == "sdpa_fp16":
+        return False, False
+    elif attn_implementation == "eager":
+        return False, True  # Use SDPA fallback for eager
+    else:
+        # Default to flash attention
+        return True, False
+
+
+def flash_attn_varlen_func_interface(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cu_seqlens_q: torch.Tensor,
+    cu_seqlens_k: torch.Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    dropout_p: float = 0.0,
+    softmax_scale: float = 1.0,
+    causal: bool = True,
+    use_flash_attn: bool = True,
+    force_fp32: bool = False,
+) -> torch.Tensor:
+    """
+    Interface for flash_attn_varlen_func with SDPA fallback option.
+
+    Args:
+        q: Query tensor [total_tokens, num_heads, head_dim]
+        k: Key tensor [total_tokens, num_kv_heads, head_dim]
+        v: Value tensor [total_tokens, num_kv_heads, head_dim]
+        cu_seqlens_q: Cumulative sequence lengths for queries [batch_size + 1]
+        cu_seqlens_k: Cumulative sequence lengths for keys/values [batch_size + 1]
+        max_seqlen_q: Maximum sequence length for queries
+        max_seqlen_k: Maximum sequence length for keys/values
+        dropout_p: Dropout probability
+        softmax_scale: Softmax scaling factor
+        causal: Whether to apply causal masking
+        use_flash_attn: Whether to use flash_attn_varlen_func (True) or SDPA fallback (False)
+        force_fp32: Whether to force fp32 computation (only used with SDPA fallback)
+
+    Returns:
+        Attention output tensor [total_tokens, num_heads, head_dim]
+    """
+    if use_flash_attn:
+        # Use original flash_attn_varlen_func
+        return flash_attn_varlen_func(
+            q=q,
+            k=k,
+            v=v,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+        )
+    else:
+        # SDPA fallback with for-loop over sequence lengths
+        return _sdpa_varlen_fallback(
+            q=q,
+            k=k,
+            v=v,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            force_fp32=force_fp32,
+        )
+
+
+def _sdpa_varlen_fallback(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    cu_seqlens_q: torch.Tensor,
+    cu_seqlens_k: torch.Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    dropout_p: float,
+    softmax_scale: float,
+    causal: bool,
+    force_fp32: bool,
+) -> torch.Tensor:
+    """
+    SDPA fallback implementation using for-loop over sequence lengths.
+
+    This function processes each sequence in the batch individually using standard
+    PyTorch SDPA, allowing fp32 computation while maintaining compatibility with
+    the variable-length interface.
+
+    Note: SDPA always applies dropout according to dropout_p. To disable dropout
+    during evaluation, ensure dropout_p=0.0 is passed when not in training mode.
+
+    GQA (Grouped Query Attention) is handled natively by SDPA using enable_gqa=True
+    when num_kv_heads != num_heads.
+    """
+    original_dtype = q.dtype
+    device = q.device
+
+    # Convert to fp32 if requested
+    if force_fp32:
+        q = q.float()
+        k = k.float()
+        v = v.float()
+
+    batch_size = len(cu_seqlens_q) - 1
+    num_heads = q.shape[1]
+    head_dim = q.shape[2]
+    num_kv_heads = k.shape[1]
+
+    # Handle GQA manually by repeating KV heads (more reliable than enable_gqa)
+    if num_kv_heads != num_heads:
+        enable_gqa = True  # GQA already handled manually
+    else:
+        enable_gqa = False
+
+    outputs = []
+
+    # Process each sequence individually
+    for batch_idx in range(batch_size):
+        start_q = cu_seqlens_q[batch_idx].item()
+        end_q = cu_seqlens_q[batch_idx + 1].item()
+        start_k = cu_seqlens_k[batch_idx].item()
+        end_k = cu_seqlens_k[batch_idx + 1].item()
+
+        seq_len_q = end_q - start_q
+        seq_len_k = end_k - start_k
+
+        if seq_len_q == 0 or seq_len_k == 0:
+            # Empty sequence, create zero output
+            seq_output = torch.zeros(
+                int(seq_len_q), num_heads, head_dim, device=device, dtype=q.dtype
+            )
+            outputs.append(seq_output)
+            continue
+
+        # Extract sequence tensors
+        q_seq = q[start_q:end_q].unsqueeze(0)  # [1, seq_len_q, num_heads, head_dim]
+        k_seq = k[start_k:end_k].unsqueeze(0)  # [1, seq_len_k, num_heads, head_dim]
+        v_seq = v[start_k:end_k].unsqueeze(0)  # [1, seq_len_k, num_heads, head_dim]
+
+        # Transpose for SDPA: [batch, heads, seq_len, head_dim]
+        q_seq = q_seq.transpose(1, 2)
+        k_seq = k_seq.transpose(1, 2)
+        v_seq = v_seq.transpose(1, 2)
+
+        # Apply SDPA - no attn_mask needed since we handle causal with is_causal
+        with torch.cuda.amp.autocast(enabled=False):  # Keep in specified precision
+            seq_output = F.scaled_dot_product_attention(
+                q_seq,
+                k_seq,
+                v_seq,
+                attn_mask=None,  # Not needed - causal handled by is_causal
+                dropout_p=dropout_p,
+                scale=softmax_scale,
+                is_causal=causal,
+                enable_gqa=enable_gqa,
+            )
+
+        # Transpose back: [batch, seq_len, heads, head_dim] -> [seq_len, heads, head_dim]
+        seq_output = seq_output.transpose(1, 2).squeeze(0)
+        outputs.append(seq_output)
+
+    # Concatenate all sequence outputs
+    result = torch.cat(outputs, dim=0)
+
+    # Convert back to original dtype
+    if force_fp32:
+        result = result.to(original_dtype)
+
+    return result
+
+
 class Qwen3Config:
     """Basic Qwen3 config for compatibility."""
 
@@ -52,7 +243,6 @@ class Qwen3Config:
         sliding_window: Optional[int] = None,
         layer_types: Optional[List[str]] = None,
         head_dim: Optional[int] = None,
-        _attn_implementation: str = "flash_attention_2",
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -75,7 +265,7 @@ class Qwen3Config:
         self.rope_scaling = rope_scaling
         self.sliding_window = sliding_window
         self.layer_types = layer_types or ["full_attention"] * num_hidden_layers
-        self._attn_implementation = "flash_attention_2"  # Force flash attention
+
         self.head_dim = (
             head_dim if head_dim is not None else hidden_size // num_attention_heads
         )
@@ -335,6 +525,7 @@ class RadixMLPQwen3Attention(nn.Module):
         fold_gather: torch.Tensor,
         scatter_indices: torch.Tensor,
         use_dummy_attn: bool = False,
+        attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """Variable length attention with radix folding/scattering."""
         compact_num_tokens = hidden_states.shape[0]
@@ -385,24 +576,40 @@ class RadixMLPQwen3Attention(nn.Module):
                 v_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
         if not use_dummy_attn:
+            # Determine attention implementation from forward pass parameter
+            use_flash_attn, force_fp32 = _get_attn_implementation_config(
+                attn_implementation
+            )
+
             q_dtype = q.dtype
-            if q_dtype != torch.float16 and q_dtype != torch.bfloat16:
+            # Only force fp16 when using flash attention (it requires fp16)
+            if (
+                use_flash_attn
+                and q_dtype != torch.float16
+                and q_dtype != torch.bfloat16
+            ):
                 q = q.to(torch.float16)
                 k = k.to(torch.float16)
                 v = v.to(torch.float16)
 
-            # Flash attention in ORIGINAL space (following Rust ground truth)
-            attn_output = flash_attn_varlen_func(
+            # Ensure cu_seq_lengths has correct dtype for flash attention
+            cu_seq_lengths_for_attn = (
+                cu_seq_lengths.to(torch.int32) if use_flash_attn else cu_seq_lengths
+            )
+
+            attn_output = flash_attn_varlen_func_interface(
                 q.contiguous(),  # [original_tokens, num_heads, head_dim]
                 k.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
                 v.contiguous(),  # [original_tokens, num_kv_heads, head_dim]
-                cu_seqlens_q=cu_seq_lengths,
-                cu_seqlens_k=cu_seq_lengths,
+                cu_seqlens_q=cu_seq_lengths_for_attn,
+                cu_seqlens_k=cu_seq_lengths_for_attn,
                 max_seqlen_q=max_seq_len,
                 max_seqlen_k=max_seq_len,
                 dropout_p=0.0,  # qwen3 uses 0.0 dropout for training and eval.
                 softmax_scale=self.scaling,
                 causal=self.is_causal,
+                use_flash_attn=use_flash_attn,
+                force_fp32=force_fp32,
             )
             if attn_output.dtype != q_dtype:
                 attn_output = attn_output.to(q_dtype)
@@ -464,6 +671,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         fold_gather: Optional[torch.Tensor] = None,
         scatter_indices: Optional[torch.Tensor] = None,
         use_dummy_attn: bool = False,
+        attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """Forward pass with radix and varlen support."""
         # Self Attention
@@ -478,6 +686,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             fold_gather=fold_gather,
             scatter_indices=scatter_indices,
             use_dummy_attn=use_dummy_attn,
+            attn_implementation=attn_implementation,
         )
         hidden_states = residual + hidden_states
 
@@ -516,9 +725,8 @@ class RadixMLPQwen3Model(nn.Module):
             hasattr(config, "layer_types") and "sliding_attention" in config.layer_types
         )
 
-    
     @staticmethod
-    @torch.no_grad()   
+    @torch.no_grad()
     def _prepare_radix_indices(
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
@@ -559,6 +767,7 @@ class RadixMLPQwen3Model(nn.Module):
         max_seq_len: int,
         use_radix_mlp: bool = True,
         use_dummy_attn: bool = False,
+        attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """
         Forward pass with radix and varlen support.
@@ -611,6 +820,7 @@ class RadixMLPQwen3Model(nn.Module):
                 fold_gather=fold_gather,
                 scatter_indices=scatter_indices,
                 use_dummy_attn=use_dummy_attn,
+                attn_implementation=attn_implementation,
             )
 
         hidden_states = self.norm(hidden_states)
@@ -643,6 +853,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
         labels: Optional[torch.Tensor] = None,
         use_radix_mlp: bool = True,
         use_dummy_attn: bool = False,
+        attn_implementation: str = "flash_attention_2",
     ) -> Any:
         """
         Forward pass for causal language modeling.
@@ -666,6 +877,7 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             max_seq_len=max_seq_len,
             use_radix_mlp=use_radix_mlp,
             use_dummy_attn=use_dummy_attn,
+            attn_implementation=attn_implementation,
         )
 
         # Compute logits
