@@ -658,97 +658,175 @@ class RadixIdenticalInferenceProof:
 
         return results
 
+
     def analyze_attention_results(self, results: Dict[str, Any]) -> None:
-        """Analyze and compare the attention results - simple and clear."""
-        print(f"\n📊 Attention Implementation Analysis")
+        """Analyze and compare the attention results with comprehensive error metrics."""
+        print(f"\nAttention Implementation Analysis")
         print("=" * 60)
 
         # Separate forward and backward results
         forward_results = {k: v for k, v in results.items() if k.endswith("_forward")}
         backward_results = {k: v for k, v in results.items() if k.endswith("_backward")}
 
-        # Forward pass analysis - simple comparisons
-        print(f"\n🎯 Forward Pass - Absolute Differences:")
+        # Find all test case names dynamically
+        test_case_names = set()
+        for key in forward_results.keys():
+            if key.endswith("_forward"):
+                parts = key.split("_")
+                if len(parts) >= 2:
+                    test_case_name = "_".join(parts[:-2])  # Remove config and _forward
+                    test_case_names.add(test_case_name)
 
-        # Test 1: Radix effect (same attention, different radix)
-        print(f"\n   🔍 Radix Effect (same attention, different radix):")
-        for attn_impl in ["flash", "sdpa", "dummy"]:
-            no_radix_key = f"single_sequence_no_radix+{attn_impl}_forward"
-            radix_key = f"single_sequence_radix+{attn_impl}_forward"
+        if not test_case_names:
+            print("No test cases found in results")
+            return
 
-            if no_radix_key in forward_results and radix_key in forward_results:
-                no_radix_output = forward_results[no_radix_key]["output"]
-                radix_output = forward_results[radix_key]["output"]
+        # Analyze each test case separately
+        for test_case_name in sorted(test_case_names):
+            print(f"\nTest Case: {test_case_name}")
+            print("-" * 40)
 
-                diff = torch.abs(no_radix_output - radix_output)
-                max_diff = diff.max().item()
-
+            # Reference configuration: {test_case_name}_no_radix+flash_forward
+            reference_key = f"{test_case_name}_no_radix+flash_forward"
+            if reference_key not in forward_results:
                 print(
-                    f"      {attn_impl}: max_diff = {max_diff:.8f} {'✅' if max_diff < 1e-6 else '❌'}"
+                    f"Reference configuration {reference_key} not found, skipping test case"
                 )
+                continue
 
-        # Test 2: Attention effect (same radix, different attention)
-        print(f"\n   🔍 Attention Effect (same radix, different attention):")
-        for radix_status in [False, True]:
-            status_str = "no_radix" if not radix_status else "radix"
-            flash_key = f"single_sequence_{status_str}+flash_forward"
-            sdpa_key = f"single_sequence_{status_str}+sdpa_forward"
+            reference_output = forward_results[reference_key]["output"]
+            print(f"Reference: {reference_key}")
+            print(f"  Shape: {reference_output.shape}")
+            print(f"  Range: [{reference_output.min():.6f}, {reference_output.max():.6f}]")
 
-            if flash_key in forward_results and sdpa_key in forward_results:
-                flash_output = forward_results[flash_key]["output"]
-                sdpa_output = forward_results[sdpa_key]["output"]
+            # Forward pass analysis
+            print(f"\nForward Pass Error Analysis:")
 
-                diff = torch.abs(flash_output - sdpa_output)
-                max_diff = diff.max().item()
+            # Test configurations for this test case
+            test_configs = [
+                ("no_radix+flash", "Reference"),
+                ("radix+flash", "Radix effect"),
+                ("no_radix+sdpa", "SDPA vs Flash"),
+                ("radix+sdpa", "Radix+SDPA"),
+                ("no_radix+dummy", "Dummy attention"),
+                ("radix+dummy", "Radix+Dummy"),
+            ]
 
-                print(
-                    f"      {status_str}: max_diff = {max_diff:.8f} {'✅' if max_diff < 1e-3 else '❌'}"
-                )
+            forward_errors = []
+            for config_name, description in test_configs:
+                test_key = f"{test_case_name}_{config_name}_forward"
 
-        # Backward pass analysis - simple loss comparisons
-        print(f"\n🎯 Backward Pass - Loss Differences:")
+                if test_key in forward_results:
+                    test_output = forward_results[test_key]["output"]
 
-        # Test 1: Radix effect on loss
-        print(f"\n   🔍 Radix Effect on Loss (same attention, different radix):")
-        for attn_impl in ["flash", "sdpa", "dummy"]:
-            no_radix_key = f"single_sequence_no_radix+{attn_impl}_backward"
-            radix_key = f"single_sequence_radix+{attn_impl}_backward"
+                    # Calculate comprehensive error metrics
+                    abs_diff = torch.abs(reference_output - test_output)
+                    rel_diff = abs_diff / (torch.abs(reference_output) + 1e-8)
 
-            if no_radix_key in backward_results and radix_key in backward_results:
-                no_radix_loss = backward_results[no_radix_key]["loss"]
-                radix_loss = backward_results[radix_key]["loss"]
+                    max_abs_error = abs_diff.max().item()
+                    mean_abs_error = abs_diff.mean().item()
+                    max_rel_error = rel_diff.max().item()
+                    mean_rel_error = rel_diff.mean().item()
 
-                loss_diff = abs(no_radix_loss - radix_loss)
+                    # Cosine similarity for overall similarity
+                    ref_flat = reference_output.flatten()
+                    test_flat = test_output.flatten()
+                    cosine_sim = torch.cosine_similarity(
+                        ref_flat.unsqueeze(0), test_flat.unsqueeze(0)
+                    ).item()
 
-                print(
-                    f"      {attn_impl}: loss_diff = {loss_diff:.8f} {'✅' if loss_diff < 1e-6 else '❌'}"
-                )
+                    forward_errors.append(
+                        (
+                            config_name,
+                            description,
+                            max_abs_error,
+                            mean_abs_error,
+                            max_rel_error,
+                            mean_rel_error,
+                            cosine_sim,
+                        )
+                    )
 
-        # Test 2: Attention effect on loss
-        print(f"\n   🔍 Attention Effect on Loss (same radix, different attention):")
-        for radix_status in [False, True]:
-            status_str = "no_radix" if not radix_status else "radix"
-            flash_key = f"single_sequence_{status_str}+flash_backward"
-            sdpa_key = f"single_sequence_{status_str}+sdpa_backward"
+                    print(f"  {config_name:20} ({description:15}):")
+                    print(f"    Max abs error:  {max_abs_error:.8f}")
+                    print(f"    Mean abs error: {mean_abs_error:.8f}")
+                    print(f"    Max rel error:  {max_rel_error:.8f}")
+                    print(f"    Mean rel error: {mean_rel_error:.8f}")
+                    print(f"    Cosine sim:     {cosine_sim:.8f}")
 
-            if flash_key in backward_results and sdpa_key in backward_results:
-                flash_loss = backward_results[flash_key]["loss"]
-                sdpa_loss = backward_results[sdpa_key]["loss"]
+                    # Quality assessment
+                    if config_name == "radix+flash":
+                        quality = "PASS" if max_abs_error < 1e-6 else "FAIL"
+                    elif config_name == "no_radix+sdpa":
+                        quality = "PASS" if max_abs_error < 1e-3 else "FAIL"
+                    elif config_name.endswith("+dummy"):
+                        quality = "EXPECTED" if max_abs_error > 1e-2 else "UNEXPECTED"
+                    else:
+                        quality = "PASS" if max_abs_error < 1e-6 else "FAIL"
+                    print(f"    Quality:         {quality}")
 
-                loss_diff = abs(flash_loss - sdpa_loss)
+            # Backward pass analysis
+            print(f"\nBackward Pass Loss Analysis:")
 
-                print(
-                    f"      {status_str}: loss_diff = {loss_diff:.8f} {'✅' if loss_diff < 1e-3 else '❌'}"
-                )
+            reference_loss_key = f"{test_case_name}_no_radix+flash_backward"
+            if reference_loss_key in backward_results:
+                reference_loss = backward_results[reference_loss_key]["loss"]
+                print(f"Reference loss: {reference_loss:.8f}")
 
-        # Summary
-        print(f"\n📋 Summary:")
-        print(f"   ✅ Radix effect: < 1e-6 (identical) when attention is the same")
-        print(
-            f"   ✅ Attention effect: < 1e-3 (small differences) when radix is the same"
-        )
-        print(f"   ✅ Both forward and backward passes work correctly")
-        print(f"   ✅ Dynamic attention selection is fully functionality")
+                backward_errors = []
+                for config_name, description in test_configs:
+                    test_key = f"{test_case_name}_{config_name}_backward"
+
+                    if test_key in backward_results:
+                        test_loss = backward_results[test_key]["loss"]
+
+                        abs_loss_diff = abs(reference_loss - test_loss)
+                        rel_loss_diff = abs_loss_diff / (abs(reference_loss) + 1e-8)
+
+                        backward_errors.append(
+                            (config_name, description, abs_loss_diff, rel_loss_diff)
+                        )
+
+                        print(f"  {config_name:20} ({description:15}):")
+                        print(f"    Abs loss diff:  {abs_loss_diff:.8f}")
+                        print(f"    Rel loss diff:  {rel_loss_diff:.8f}")
+
+                        # Quality assessment
+                        if config_name == "radix+flash":
+                            quality = "PASS" if abs_loss_diff < 1e-6 else "FAIL"
+                        elif config_name == "no_radix+sdpa":
+                            quality = "PASS" if abs_loss_diff < 1e-3 else "FAIL"
+                        elif config_name.endswith("+dummy"):
+                            quality = "EXPECTED" if abs_loss_diff > 1e-2 else "UNEXPECTED"
+                        else:
+                            quality = "PASS" if abs_loss_diff < 1e-6 else "FAIL"
+                        print(f"    Quality:         {quality}")
+
+            # Ranking for this test case
+            print(f"\nRanking (by max absolute error, best to worst):")
+            forward_errors.sort(key=lambda x: x[2])  # Sort by max_abs_error
+            for i, (
+                config_name,
+                description,
+                max_abs_error,
+                mean_abs_error,
+                max_rel_error,
+                mean_rel_error,
+                cosine_sim,
+            ) in enumerate(forward_errors):
+                rank = f"#{i + 1}"
+                print(f"  {rank} {config_name:20}: max_abs_error={max_abs_error:.8f}")
+
+        # Overall summary across all test cases
+        print(f"\nOverall Summary:")
+        print("-" * 20)
+        print("Reference: {test_case_name}_no_radix+flash for each test case")
+        print("Expected results:")
+        print("  - radix+flash: < 1e-6 absolute error (radix should be identical)")
+        print("  - no_radix+sdpa: < 1e-3 absolute error (SDPA vs Flash attention)")
+        print("  - dummy attention: > 1e-2 absolute error (should be very different)")
+        print("  - radix+sdpa: similar to no_radix+sdpa")
+        print("  - radix+dummy: similar to no_radix+dummy")
 
 
 def main():
