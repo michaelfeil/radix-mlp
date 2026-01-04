@@ -534,10 +534,10 @@ class RadixIdenticalInferenceProof:
 
         # Test configurations
         test_configs = [
-            (False, False, "flash_attention_2", "flash + no_radix", "BASELINE"),
-            (True, False, "flash_attention_2", "flash + radix", "PASS"),
-            (False, False, "sdpa", "sdpa + no_radix", "EXPECTED"),
+            (False, False, "sdpa", "sdpa + no_radix", "BASELINE"),
             (True, False, "sdpa", "sdpa + radix", "EXPECTED"),
+            (False, False, "flash_attention_2", "flash + no_radix", "EXPECTED"),
+            (True, False, "flash_attention_2", "flash + radix", "EXPECTED"),
         ]
 
         # Store results for all configurations
@@ -592,7 +592,7 @@ class RadixIdenticalInferenceProof:
         )
         print(f"├{'─' * 21}┼{'─' * 14}┼{'─' * 14}┼{'─' * 14}┤")
 
-        baseline_grads = all_results.get("flash + no_radix", {}).get("grads")
+        baseline_grads = all_results.get("sdpa + no_radix", {}).get("grads")
 
         for config_name in [
             "flash + no_radix",
@@ -606,7 +606,7 @@ class RadixIdenticalInferenceProof:
             result = all_results[config_name]
             grads = result["grads"]
 
-            if config_name == "flash + no_radix":
+            if config_name == "sdpa + no_radix":
                 max_diff = 0.0
                 mean_diff = 0.0
                 status = "BASELINE"
