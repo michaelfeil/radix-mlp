@@ -259,6 +259,44 @@ class RadixModelComparator:
 
         return results
 
+    def _run_forward_pass(
+        self,
+        input_ids: torch.Tensor,
+        position_ids: torch.Tensor,
+        cu_seq_lengths: torch.Tensor,
+        max_seq_len: int,
+        use_radix_mlp: bool,
+        use_dummy_attn: bool,
+        attn_implementation: str = "flash_attention_2",
+    ) -> torch.Tensor:
+        """
+        Run a single forward pass configuration.
+
+        Args:
+            input_ids: Input token IDs
+            position_ids: Position IDs
+            cu_seq_lengths: Cumulative sequence lengths
+            max_seq_len: Maximum sequence length
+            use_radix_mlp: Whether to use radix MLP
+            use_dummy_attn: Whether to use dummy attention
+            attn_implementation: Attention implementation to use
+
+        Returns:
+            Output logits
+        """
+        with torch.no_grad():
+            output = self.model(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                cu_seq_lengths=cu_seq_lengths,
+                max_seq_len=max_seq_len,
+                use_radix_mlp=use_radix_mlp,
+                use_dummy_attn=use_dummy_attn,
+                attn_implementation=attn_implementation,
+            ).logits
+
+        return output
+
     def _run_backward_pass(
         self,
         input_ids: torch.Tensor,
@@ -503,6 +541,7 @@ class RadixIdenticalInferenceProof:
     ) -> Dict[str, Any]:
         """
         Compare all 4 configurations (radix/no-radix × flash/sdpa) for a single test case.
+        Runs both forward and backward passes.
 
         Args:
             sequences: Test sequences
@@ -536,6 +575,7 @@ class RadixIdenticalInferenceProof:
         test_configs = [
             (False, False, "sdpa", "sdpa + no_radix", "BASELINE"),
             (True, False, "sdpa", "sdpa + radix", "EXPECTED"),
+            # comparing to flash-attn package.
             (False, False, "flash_attention_2", "flash + no_radix", "EXPECTED"),
             (True, False, "flash_attention_2", "flash + radix", "EXPECTED"),
         ]
@@ -544,8 +584,35 @@ class RadixIdenticalInferenceProof:
         all_results = {}
 
         try:
-            # Run all configurations
-            print(f"\n  Running configurations...")
+            # Run forward passes
+            print(f"\n  Running forward passes...")
+            with torch.no_grad():
+                for (
+                    use_radix,
+                    use_dummy,
+                    attn_impl,
+                    config_name,
+                    expected_status,
+                ) in test_configs:
+                    output = self.comparator.model(
+                        input_ids=input_ids,
+                        position_ids=position_ids,
+                        cu_seq_lengths=cu_seq_lengths,
+                        max_seq_len=max_seq_len,
+                        use_radix_mlp=use_radix,
+                        use_dummy_attn=use_dummy,
+                        attn_implementation=attn_impl,
+                    ).logits.cpu()
+
+                    all_results[config_name] = {
+                        "forward_logits": output,
+                        "use_radix": use_radix,
+                        "attn_impl": attn_impl,
+                        "expected_status": expected_status,
+                    }
+
+            # Run backward passes
+            print(f"\n  Running backward passes...")
             for (
                 use_radix,
                 use_dummy,
@@ -563,15 +630,14 @@ class RadixIdenticalInferenceProof:
                     attn_implementation=attn_impl,
                 )
 
-                all_results[config_name] = {
-                    "loss": loss.item(),
-                    "grads": grads,
-                    "use_radix": use_radix,
-                    "attn_impl": attn_impl,
-                    "expected_status": expected_status,
-                }
+                all_results[config_name].update(
+                    {
+                        "loss": loss.item(),
+                        "grads": grads,
+                    }
+                )
 
-            # Print comparison table
+            # Print comparison tables
             self._print_configuration_comparison_table(test_name, all_results)
 
         except Exception as e:
@@ -586,13 +652,60 @@ class RadixIdenticalInferenceProof:
         all_results: Dict[str, Any],
     ):
         """Print a formatted table comparing all configurations."""
-        print(f"\n┌{'─' * 21}┬{'─' * 14}┬{'─' * 14}┬{'─' * 14}┐")
+        baseline_output = all_results.get("sdpa + no_radix", {}).get("forward_logits")
+        baseline_grads = all_results.get("sdpa + no_radix", {}).get("grads")
+
+        # Forward pass table
+        print(f"\n📊 FORWARD PASS COMPARISON")
+        print(f"┌{'─' * 21}┬{'─' * 14}┬{'─' * 14}┬{'─' * 14}┐")
         print(
             f"│ {'Configuration':^19} │ {'Max Diff':^12} │ {'Mean Diff':^12} │ {'Status':^12} │"
         )
         print(f"├{'─' * 21}┼{'─' * 14}┼{'─' * 14}┼{'─' * 14}┤")
 
-        baseline_grads = all_results.get("sdpa + no_radix", {}).get("grads")
+        for config_name in [
+            "flash + no_radix",
+            "flash + radix",
+            "sdpa + no_radix",
+            "sdpa + radix",
+        ]:
+            if config_name not in all_results:
+                continue
+
+            result = all_results[config_name]
+            output = result["forward_logits"]
+
+            if config_name == "sdpa + no_radix":
+                max_diff = 0.0
+                mean_diff = 0.0
+                status = "BASELINE"
+            else:
+                # Compare to baseline
+                diff = torch.abs(output - baseline_output)
+                max_diff = diff.max().item()
+                mean_diff = diff.mean().item()
+
+                # Determine status
+                if max_diff < 1e-4:
+                    status = "✅ PASS"
+                elif max_diff < 1e-2:
+                    status = "⚠️  EXPECTED"
+                else:
+                    status = "❌ FAIL"
+
+            print(
+                f"│ {config_name:^19} │ {max_diff:^12.8f} │ {mean_diff:^12.8f} │ {status:^12} │"
+            )
+
+        print(f"└{'─' * 21}┴{'─' * 14}┴{'─' * 14}┴{'─' * 14}┘")
+
+        # Backward pass table
+        print(f"\n📊 BACKWARD PASS COMPARISON")
+        print(f"┌{'─' * 21}┬{'─' * 14}┬{'─' * 14}┬{'─' * 14}┐")
+        print(
+            f"│ {'Configuration':^19} │ {'Max Diff':^12} │ {'Mean Diff':^12} │ {'Status':^12} │"
+        )
+        print(f"├{'─' * 21}┼{'─' * 14}┼{'─' * 14}┼{'─' * 14}┤")
 
         for config_name in [
             "flash + no_radix",
@@ -635,8 +748,7 @@ class RadixIdenticalInferenceProof:
                 f"│ {config_name:^19} │ {max_diff:^12.8f} │ {mean_diff:^12.8f} │ {status:^12} │"
             )
 
-            print(f"└{'─' * 21}┴{'─' * 14}┴{'─' * 14}┴{'─' * 14}┘")
-
+        print(f"└{'─' * 21}┴{'─' * 14}┴{'─' * 14}┴{'─' * 14}┘")
 
     def _generate_summary(self, results: Dict[str, Any]):
         """Generate proof summary."""
