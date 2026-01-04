@@ -391,7 +391,6 @@ class RadixModelComparator:
         try:
             # Run all configurations
             for use_radix, attn_impl, config_name in test_configs:
-                print(f"\n  📊 Running: {config_name}")
 
                 loss, grads = self._run_backward_pass(
                     input_ids=input_ids,
@@ -402,54 +401,73 @@ class RadixModelComparator:
                     attn_implementation=attn_impl,
                 )
 
-                print(f"    Loss: {loss.item():.6f}")
                 all_results[config_name] = {"loss": loss.item(), "grads": grads}
 
-            # Compare all configurations
-            print(f"\n  🔍 Comparing gradients across configurations:")
+            # Compare only SDPA configurations
+            print(f"\n  🔍 Comparing SDPA gradients:")
 
-            config_names = [cfg[2] for cfg in test_configs]
-            for i, config1 in enumerate(config_names):
-                for j, config2 in enumerate(config_names):
-                    if i >= j:
-                        continue
+            # Only compare SDPA configurations
+            sdpa_configs = [cfg for cfg in test_configs if cfg[1] == "sdpa"]
+            if len(sdpa_configs) == 2:
+                # Get the two SDPA configurations (no_radix and radix)
+                no_radix_config = next(cfg for cfg in sdpa_configs if not cfg[0])
+                radix_config = next(cfg for cfg in sdpa_configs if cfg[0])
 
-                    grads1 = all_results[config1]["grads"]
-                    grads2 = all_results[config2]["grads"]
+                no_radix_name = no_radix_config[2]
+                radix_name = radix_config[2]
 
-                    # Compare gradients
-                    for name in grads1:
-                        if name in grads2:
-                            diff = torch.abs(grads1[name] - grads2[name])
-                            max_diff = diff.max().item()
-                            mean_diff = diff.mean().item()
-                            grad_diffs.append(
-                                (f"{config1}_vs_{config2}", name, max_diff, mean_diff)
+                grads1 = all_results[no_radix_name]["grads"]
+                grads2 = all_results[radix_name]["grads"]
+
+                # Compare gradients
+                sdpa_grad_diffs = []
+                for name in grads1:
+                    if name in grads2:
+                        diff = torch.abs(grads1[name] - grads2[name])
+                        max_diff = diff.max().item()
+                        mean_diff = diff.mean().item()
+                        sdpa_grad_diffs.append(
+                            (
+                                f"{no_radix_name}_vs_{radix_name}",
+                                name,
+                                max_diff,
+                                mean_diff,
                             )
-
-            # Find maximum gradient difference
-            if grad_diffs:
-                breakpoint()
-                max_grad_diff = max(d[2] for d in grad_diffs)
-                mean_grad_diff = np.mean([d[3] for d in grad_diffs])
-                gradients_close = all(d[2] < 1e-4 for d in grad_diffs)
-
-                print(f"\n  Max gradient difference: {max_grad_diff:.8f}")
-                print(f"  Mean gradient difference: {mean_grad_diff:.8f}")
-                print(f"  Gradients close: {gradients_close}")
-
-                if gradients_close:
-                    print("  ✅ PASS: Backward gradients are identical!")
-                else:
-                    print("  ❌ FAIL: Backward gradients differ!")
-
-                    # Show parameters with largest differences
-                    print("\n  🔍 Parameters with largest gradient differences:")
-                    grad_diffs.sort(key=lambda x: x[2], reverse=True)
-                    for comparison, name, max_diff, mean_diff in grad_diffs[:5]:
-                        print(
-                            f"    {comparison} ({name}): max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}"
                         )
+
+                # Calculate statistics for SDPA comparison
+                if sdpa_grad_diffs:
+                    max_grad_diff = max(d[2] for d in sdpa_grad_diffs)
+                    mean_grad_diff = np.mean([d[3] for d in sdpa_grad_diffs])
+                    gradients_close = all(d[2] < 1e-4 for d in sdpa_grad_diffs)
+
+                    print(f"\n  SDPA vs SDPA+radix gradient comparison:")
+                    print(f"  Max gradient difference: {max_grad_diff:.8f}")
+                    print(f"  Mean gradient difference: {mean_grad_diff:.8f}")
+                    print(f"  Gradients close: {gradients_close}")
+
+                    if gradients_close:
+                        print("  ✅ PASS: SDPA and SDPA+radix gradients are identical!")
+                    else:
+                        print("  ❌ FAIL: SDPA and SDPA+radix gradients differ!")
+
+                        # Show parameters with largest differences for SDPA comparison
+                        print(
+                            "\n  🔍 SDPA parameters with largest gradient differences:"
+                        )
+                        sdpa_grad_diffs.sort(key=lambda x: x[2], reverse=True)
+                        for comparison, name, max_diff, mean_diff in sdpa_grad_diffs[
+                            :5
+                        ]:
+                            print(
+                                f"    {name}: max_diff={max_diff:.8f}, mean_diff={mean_diff:.8f}"
+                            )
+                else:
+                    print("  ⚠️  No gradients found for SDPA comparison")
+            else:
+                print(
+                    "  ⚠️  Expected 2 SDPA configurations but found", len(sdpa_configs)
+                )
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
