@@ -425,9 +425,6 @@ class RadixModelComparator:
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
-            import traceback
-
-            traceback.print_exc()
             return {"test_name": test_name, "error": str(e)}
 
         results = {
@@ -501,6 +498,146 @@ class RadixIdenticalInferenceProof:
 
         return results
 
+    def compare_configurations_for_test_case(
+        self, sequences: List[List[int]], test_name: str
+    ) -> Dict[str, Any]:
+        """
+        Compare all 4 configurations (radix/no-radix × flash/sdpa) for a single test case.
+
+        Args:
+            sequences: Test sequences
+            test_name: Name of the test
+
+        Returns:
+            Dictionary with comparison results for all configurations
+        """
+        print(f"\n{'=' * 70}")
+        print(f"📊 ATTENTION IMPLEMENTATION COMPARISON")
+        print(f"Test Case: {test_name}")
+        print(f"Baseline: flash_attention_2 + no_radix")
+        print(f"{'=' * 70}")
+
+        # Prepare inputs
+        input_ids, position_ids, cu_seq_lengths, max_seq_len = (
+            self.comparator.prepare_batchless_inputs(sequences)
+        )
+
+        # Move to GPU and enable gradients
+        input_ids = input_ids.to("cuda")
+        position_ids = position_ids.to("cuda")
+        cu_seq_lengths = cu_seq_lengths.to("cuda")
+
+        print(f"Sequences: {sequences}")
+        print(f"Total tokens: {input_ids.shape[0]}")
+        print(f"Cumulative seq lengths: {cu_seq_lengths.tolist()}")
+        print(f"Max seq length: {max_seq_len}")
+
+        # Test configurations
+        test_configs = [
+            (False, False, "flash_attention_2", "flash + no_radix", "BASELINE"),
+            (True, False, "flash_attention_2", "flash + radix", "PASS"),
+            (False, False, "sdpa", "sdpa + no_radix", "EXPECTED"),
+            (True, False, "sdpa", "sdpa + radix", "EXPECTED"),
+        ]
+
+        # Store results for all configurations
+        all_results = {}
+
+        try:
+            # Run all configurations
+            print(f"\n  Running configurations...")
+            for (
+                use_radix,
+                use_dummy,
+                attn_impl,
+                config_name,
+                expected_status,
+            ) in test_configs:
+                loss, grads = self.comparator._run_backward_pass(
+                    input_ids=input_ids,
+                    position_ids=position_ids,
+                    cu_seq_lengths=cu_seq_lengths,
+                    max_seq_len=max_seq_len,
+                    use_radix_mlp=use_radix,
+                    use_dummy_attn=use_dummy,
+                    attn_implementation=attn_impl,
+                )
+
+                all_results[config_name] = {
+                    "loss": loss.item(),
+                    "grads": grads,
+                    "use_radix": use_radix,
+                    "attn_impl": attn_impl,
+                    "expected_status": expected_status,
+                }
+
+            # Print comparison table
+            self._print_configuration_comparison_table(test_name, all_results)
+
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            return {"test_name": test_name, "error": str(e)}
+
+        return {"test_name": test_name, "all_results": all_results}
+
+    def _print_configuration_comparison_table(
+        self,
+        test_name: str,
+        all_results: Dict[str, Any],
+    ):
+        """Print a formatted table comparing all configurations."""
+        print(f"\n┌{'─' * 21}┬{'─' * 14}┬{'─' * 14}┬{'─' * 14}┐")
+        print(
+            f"│ {'Configuration':^19} │ {'Max Diff':^12} │ {'Mean Diff':^12} │ {'Status':^12} │"
+        )
+        print(f"├{'─' * 21}┼{'─' * 14}┼{'─' * 14}┼{'─' * 14}┤")
+
+        baseline_grads = all_results.get("flash + no_radix", {}).get("grads")
+
+        for config_name in [
+            "flash + no_radix",
+            "flash + radix",
+            "sdpa + no_radix",
+            "sdpa + radix",
+        ]:
+            if config_name not in all_results:
+                continue
+
+            result = all_results[config_name]
+            grads = result["grads"]
+
+            if config_name == "flash + no_radix":
+                max_diff = 0.0
+                mean_diff = 0.0
+                status = "BASELINE"
+            else:
+                # Compare to baseline
+                max_diffs = []
+                mean_diffs = []
+                for name in grads:
+                    if baseline_grads and name in baseline_grads:
+                        diff = torch.abs(grads[name] - baseline_grads[name])
+                        max_diffs.append(diff.max().item())
+                        mean_diffs.append(diff.mean().item())
+
+                max_diff = max(max_diffs) if max_diffs else 0.0
+                mean_diff = np.mean(mean_diffs) if mean_diffs else 0.0
+
+                # Determine status
+                if max_diff < 1e-4:
+                    status = "✅ PASS"
+                elif max_diff < 1e-2:
+                    status = "⚠️  EXPECTED"
+                else:
+                    status = "❌ FAIL"
+
+            print(
+                f"│ {config_name:^19} │ {max_diff:^12.8f} │ {mean_diff:^12.8f} │ {status:^12} │"
+            )
+
+            print(f"└{'─' * 21}┴{'─' * 14}┴{'─' * 14}┴{'─' * 14}┘")
+
+
     def _generate_summary(self, results: Dict[str, Any]):
         """Generate proof summary."""
         print("\n" + "=" * 70)
@@ -568,11 +705,17 @@ def main():
     proof = RadixIdenticalInferenceProof()
     radix_results = proof.run_all_proofs()
 
-    # Run attention implementation comparison
+    test_cases = proof.test_generator.create_test_cases()
+    attention_results = {}
+
+    for test_name, sequences in test_cases.items():
+        result = proof.compare_configurations_for_test_case(sequences, test_name)
+        attention_results[test_name] = result
 
     # Combined results
     combined_results = {
         "radix_proof": radix_results,
+        "attention_comparison": attention_results,
     }
 
     return combined_results
