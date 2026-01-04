@@ -524,11 +524,11 @@ class RadixMLPQwen3Attention(nn.Module):
         max_seq_len: int,
         fold_gather: torch.Tensor,
         scatter_indices: torch.Tensor,
-        use_dummy_attn: bool = False,
         attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """Variable length attention with radix folding/scattering."""
         compact_num_tokens = hidden_states.shape[0]
+
         q_compact = self.q_proj(hidden_states)  # [compact_tokens, num_heads * head_dim]
         k_compact = self.k_proj(
             hidden_states
@@ -575,19 +575,13 @@ class RadixMLPQwen3Attention(nn.Module):
             v = index_select_scatter_gather(
                 v_compact, scatter_indices
             )  # [original_tokens, num_kv_heads, head_dim]
-        if not use_dummy_attn:
+        if 1:
             # Determine attention implementation from forward pass parameter
-            use_flash_attn, force_fp32 = _get_attn_implementation_config(
-                attn_implementation
-            )
+            use_flash_attn, force_fp32 = _get_attn_implementation_config(attn_implementation)
 
             q_dtype = q.dtype
             # Only force fp16 when using flash attention (it requires fp16)
-            if (
-                use_flash_attn
-                and q_dtype != torch.float16
-                and q_dtype != torch.bfloat16
-            ):
+            if use_flash_attn and q_dtype != torch.float16 and q_dtype != torch.bfloat16:
                 q = q.to(torch.float16)
                 k = k.to(torch.float16)
                 v = v.to(torch.float16)
@@ -618,17 +612,6 @@ class RadixMLPQwen3Attention(nn.Module):
             attn_output = attn_output.view(
                 -1, self.config.num_attention_heads * self.head_dim
             )  # [original_tokens, hidden_size]
-        else:
-            # dummy operator instead of sequence mixing.
-            # k and v need to be expanded to match q's heads
-            attn_output = (
-                q
-                + k.repeat_interleave(self.num_key_value_groups, dim=1)
-                + v.repeat_interleave(self.num_key_value_groups, dim=1)
-            )
-            attn_output = attn_output.view(
-                -1, self.config.num_attention_heads * self.head_dim
-            )
         if skip_radix:
             attn_output_compact = attn_output
         else:
@@ -661,6 +644,7 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             else "full_attention"
         )
 
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -670,7 +654,6 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
         max_seq_len: int,
         fold_gather: Optional[torch.Tensor] = None,
         scatter_indices: Optional[torch.Tensor] = None,
-        use_dummy_attn: bool = False,
         attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """Forward pass with radix and varlen support."""
@@ -685,7 +668,6 @@ class RadixMLPQwen3DecoderLayer(nn.Module):
             max_seq_len=max_seq_len,
             fold_gather=fold_gather,
             scatter_indices=scatter_indices,
-            use_dummy_attn=use_dummy_attn,
             attn_implementation=attn_implementation,
         )
         hidden_states = residual + hidden_states
@@ -766,7 +748,6 @@ class RadixMLPQwen3Model(nn.Module):
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
         use_radix_mlp: bool = True,
-        use_dummy_attn: bool = False,
         attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """
@@ -819,7 +800,6 @@ class RadixMLPQwen3Model(nn.Module):
                 max_seq_len=max_seq_len,
                 fold_gather=fold_gather,
                 scatter_indices=scatter_indices,
-                use_dummy_attn=use_dummy_attn,
                 attn_implementation=attn_implementation,
             )
 
@@ -852,7 +832,6 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
         max_seq_len: int,
         labels: Optional[torch.Tensor] = None,
         use_radix_mlp: bool = True,
-        use_dummy_attn: bool = False,
         attn_implementation: str = "flash_attention_2",
     ) -> Any:
         """
@@ -865,7 +844,6 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             max_seq_len: Maximum sequence length in batch
             labels: Optional [num_tokens] labels for loss computation
             use_radix_mlp: Whether to use RadixMLP folding/scattering
-            use_dummy_attn: Whether to use dummy attention (for testing)
 
         Returns:
             Output with loss and logits
@@ -876,7 +854,6 @@ class RadixMLPQwen3ForCausalLM(nn.Module):
             cu_seq_lengths=cu_seq_lengths,
             max_seq_len=max_seq_len,
             use_radix_mlp=use_radix_mlp,
-            use_dummy_attn=use_dummy_attn,
             attn_implementation=attn_implementation,
         )
 

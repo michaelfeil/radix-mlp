@@ -112,9 +112,8 @@ class TestSequenceGenerator:
 class RadixModelComparator:
     """Compare radix vs non-radix model outputs."""
 
-    def __init__(self, config: RadixMLPQwen3Config, use_dummy_attn: bool = False):
+    def __init__(self, config: RadixMLPQwen3Config):
         self.config = config
-        self.use_dummy_attn = use_dummy_attn
         self.model = self._create_model()
 
     @functools.lru_cache(maxsize=1)
@@ -195,7 +194,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=True,
-                use_dummy_attn=self.use_dummy_attn,
+                attn_implementation="sdpa",
             ).logits.cpu()
 
             # Run with radix disabled
@@ -205,7 +204,7 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=False,
-                use_dummy_attn=self.use_dummy_attn,
+                attn_implementation="sdpa",
             ).logits.cpu()
 
         # Compare outputs
@@ -266,7 +265,6 @@ class RadixModelComparator:
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
         use_radix_mlp: bool,
-        use_dummy_attn: bool,
         attn_implementation: str = "flash_attention_2",
     ) -> torch.Tensor:
         """
@@ -278,7 +276,6 @@ class RadixModelComparator:
             cu_seq_lengths: Cumulative sequence lengths
             max_seq_len: Maximum sequence length
             use_radix_mlp: Whether to use radix MLP
-            use_dummy_attn: Whether to use dummy attention
             attn_implementation: Attention implementation to use
 
         Returns:
@@ -291,7 +288,6 @@ class RadixModelComparator:
                 cu_seq_lengths=cu_seq_lengths,
                 max_seq_len=max_seq_len,
                 use_radix_mlp=use_radix_mlp,
-                use_dummy_attn=use_dummy_attn,
                 attn_implementation=attn_implementation,
             ).logits
 
@@ -304,7 +300,6 @@ class RadixModelComparator:
         cu_seq_lengths: torch.Tensor,
         max_seq_len: int,
         use_radix_mlp: bool,
-        use_dummy_attn: bool,
         attn_implementation: str = "flash_attention_2",
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
@@ -316,7 +311,6 @@ class RadixModelComparator:
             cu_seq_lengths: Cumulative sequence lengths
             max_seq_len: Maximum sequence length
             use_radix_mlp: Whether to use radix MLP
-            use_dummy_attn: Whether to use dummy attention
             attn_implementation: Attention implementation to use
 
         Returns:
@@ -332,7 +326,6 @@ class RadixModelComparator:
             cu_seq_lengths=cu_seq_lengths,
             max_seq_len=max_seq_len,
             use_radix_mlp=use_radix_mlp,
-            use_dummy_attn=use_dummy_attn,
             attn_implementation=attn_implementation,
         ).logits
 
@@ -382,14 +375,11 @@ class RadixModelComparator:
 
         # Test configurations
         test_configs = [
-            (False, False, "flash_attention_2", "no_radix+flash"),
-            (True, False, "flash_attention_2", "radix+flash"),
+            (False, "flash_attention_2", "no_radix+flash"),
+            (True, "flash_attention_2", "radix+flash"),
+            (False, "sdpa", "no_radix+sdpa"),
+            (True, "sdpa", "radix+sdpa"),
         ]
-        if not self.use_dummy_attn:
-            test_configs += [
-                (False, False, "sdpa", "no_radix+sdpa"),
-                (True, False, "sdpa", "radix+sdpa"),
-            ]
 
         # Store results for all configurations
         all_results = {}
@@ -400,7 +390,7 @@ class RadixModelComparator:
 
         try:
             # Run all configurations
-            for use_radix, use_dummy, attn_impl, config_name in test_configs:
+            for use_radix, attn_impl, config_name in test_configs:
                 print(f"\n  📊 Running: {config_name}")
 
                 loss, grads = self._run_backward_pass(
@@ -409,7 +399,6 @@ class RadixModelComparator:
                     cu_seq_lengths=cu_seq_lengths,
                     max_seq_len=max_seq_len,
                     use_radix_mlp=use_radix,
-                    use_dummy_attn=use_dummy,
                     attn_implementation=attn_impl,
                 )
 
@@ -419,7 +408,7 @@ class RadixModelComparator:
             # Compare all configurations
             print(f"\n  🔍 Comparing gradients across configurations:")
 
-            config_names = [cfg[3] for cfg in test_configs]
+            config_names = [cfg[2] for cfg in test_configs]
             for i, config1 in enumerate(config_names):
                 for j, config2 in enumerate(config_names):
                     if i >= j:
@@ -440,6 +429,7 @@ class RadixModelComparator:
 
             # Find maximum gradient difference
             if grad_diffs:
+                breakpoint()
                 max_grad_diff = max(d[2] for d in grad_diffs)
                 mean_grad_diff = np.mean([d[3] for d in grad_diffs])
                 gradients_close = all(d[2] < 1e-4 for d in grad_diffs)
@@ -486,7 +476,6 @@ class RadixIdenticalInferenceProof:
     def __init__(self):
         self.config = self._create_test_config()
         self.comparator = RadixModelComparator(self.config)
-        self.comparator_dummy = RadixModelComparator(self.config, use_dummy_attn=True)
         self.test_generator = TestSequenceGenerator()
 
     def _create_test_config(self) -> RadixMLPQwen3Config:
@@ -518,18 +507,11 @@ class RadixIdenticalInferenceProof:
         for test_name, sequences in test_cases.items():
             result = self.comparator.compare_radix_vs_nonradix(sequences, test_name)
             results[test_name] = result
-            # Run backward comparison without dummy attention
+            # Run backward comparison
             backward_result = self.comparator.compare_radix_vs_nonradix_backward(
                 sequences, test_name + "_backward"
             )
             results[test_name + "_backward"] = backward_result
-            # Run backward comparison with dummy attention
-            backward_result_dummy = (
-                self.comparator_dummy.compare_radix_vs_nonradix_backward(
-                    sequences, test_name + "_backward_dummy_attn"
-                )
-            )
-            results[test_name + "_backward_dummy_attn"] = backward_result_dummy
 
         # Generate summary
         self._generate_summary(results)
@@ -573,11 +555,11 @@ class RadixIdenticalInferenceProof:
 
         # Test configurations
         test_configs = [
-            (False, False, "sdpa", "sdpa + no_radix", "BASELINE"),
-            (True, False, "sdpa", "sdpa + radix", "EXPECTED"),
+            (False, "sdpa", "sdpa + no_radix", "BASELINE"),
+            (True, "sdpa", "sdpa + radix", "EXPECTED"),
             # comparing to flash-attn package.
-            (False, False, "flash_attention_2", "flash + no_radix", "EXPECTED"),
-            (True, False, "flash_attention_2", "flash + radix", "EXPECTED"),
+            (False, "flash_attention_2", "flash + no_radix", "EXPECTED"),
+            (True, "flash_attention_2", "flash + radix", "EXPECTED"),
         ]
 
         # Store results for all configurations
@@ -589,7 +571,6 @@ class RadixIdenticalInferenceProof:
             with torch.no_grad():
                 for (
                     use_radix,
-                    use_dummy,
                     attn_impl,
                     config_name,
                     expected_status,
@@ -600,7 +581,6 @@ class RadixIdenticalInferenceProof:
                         cu_seq_lengths=cu_seq_lengths,
                         max_seq_len=max_seq_len,
                         use_radix_mlp=use_radix,
-                        use_dummy_attn=use_dummy,
                         attn_implementation=attn_impl,
                     ).logits.cpu()
 
@@ -615,7 +595,6 @@ class RadixIdenticalInferenceProof:
             print(f"\n  Running backward passes...")
             for (
                 use_radix,
-                use_dummy,
                 attn_impl,
                 config_name,
                 expected_status,
@@ -626,7 +605,6 @@ class RadixIdenticalInferenceProof:
                     cu_seq_lengths=cu_seq_lengths,
                     max_seq_len=max_seq_len,
                     use_radix_mlp=use_radix,
-                    use_dummy_attn=use_dummy,
                     attn_implementation=attn_impl,
                 )
 
@@ -765,11 +743,9 @@ class RadixIdenticalInferenceProof:
         base_tests = set()
         for test_name in comparison_tests:
             if "_backward" in test_name:
-                base_name = test_name.replace("_backward", "").replace(
-                    "_dummy_attn", ""
-                )
+                base_name = test_name.replace("_backward", "")
                 base_tests.add(base_name)
-            elif "_backward_dummy_attn" not in test_name:
+            else:
                 base_tests.add(test_name)
 
         for base_name in sorted(base_tests):
@@ -780,21 +756,13 @@ class RadixIdenticalInferenceProof:
                 max_diff = result["max_diff"]
                 print(f"{base_name}: {status} (max_diff: {max_diff:.8f})")
 
-            # Backward pass without dummy attention
+            # Backward pass
             backward_key = base_name + "_backward"
             if backward_key in results:
                 result = results[backward_key]
                 status = "✅ PASS" if result["are_close"] else "❌ FAIL"
                 max_diff = result["max_diff"]
                 print(f"{backward_key}: {status} (max_diff: {max_diff:.8f})")
-
-            # Backward pass with dummy attention
-            backward_dummy_key = base_name + "_backward_dummy_attn"
-            if backward_dummy_key in results:
-                result = results[backward_dummy_key]
-                status = "✅ PASS" if result["are_close"] else "❌ FAIL"
-                max_diff = result["max_diff"]
-                print(f"{backward_dummy_key}: {status} (max_diff: {max_diff:.8f})")
 
         # Overall conclusion
         print(
