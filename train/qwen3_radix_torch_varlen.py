@@ -108,7 +108,7 @@ def rotate_half(x):
 
 
 def index_select_scatter_gather(
-    input_t: torch.Tensor, indices: torch.Tensor, impl=2
+    input_t: torch.Tensor, indices: torch.Tensor, impl=0
 ) -> torch.Tensor:
     """Helper function to index select using scatter/gather indices."""
     if impl == 0:
@@ -516,7 +516,9 @@ class RadixMLPQwen3Model(nn.Module):
             hasattr(config, "layer_types") and "sliding_attention" in config.layer_types
         )
 
+    
     @staticmethod
+    @torch.no_grad()   
     def _prepare_radix_indices(
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
