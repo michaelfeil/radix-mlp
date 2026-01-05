@@ -7,16 +7,18 @@ RadixMLP enables prefix-based computation sharing for transformer models, elimin
 - Prefix deduplication: Automatically identifies and compacts shared subsequences across batched sequences
 - Stateless operation: Single forward pass optimization, no cache management required
 - Weight compatible: Drop-in replacement for standard transformer models
-- Production ready: Integrated into text-embeddings-inference upstream
+- compatible with autograd
+- Production ready: Integrated into [text-embeddings-inference upstream](https://github.com/huggingface/text-embeddings-inference/pull/761)
 
 ## Project Structure
 
 ```
 radix-mlp/
-├── package/           # Rust core library
-├── python_bindings/   # Python interface (PyTorch + NumPy)
-├── train/             # Training scripts & mathematical proofs
-├── benchmark/         # Performance benchmarks (MSMARCO)
+├── package/           # Rust core library - `cargo add radix_mlp`
+├── python_bindings/   # Python interface (PyTorch + NumPy) `pip install radix_mlp`
+├── train/             # Training scripts & experimental results for autograd
+├── benchmark/         # Performance benchmarks via rest api
+├── kernels            # cuda kernels for fast index-select 
 └── Readme.md          # This file
 ```
 
