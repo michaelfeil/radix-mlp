@@ -425,13 +425,14 @@ def get_server_info(base_url: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"Error fetching server info: {e}")
         return {
-            "model_name": "Unknown",
-            "model_dtype": "Unknown",
-            "version": "Unknown",
-            "max_concurrent_requests": "Unknown",
+            "model_name": "Qwen/Qwen-3-Embedding",
+            "model_dtype": "fp16",
+            "version": "vllm",
+            "max_concurrent_requests": "NA",
             "max_input_length": "Unknown",
-            "max_batch_tokens": "Unknown",
-            "radix_mlp_threshold": "Unknown",
+            "max_batch_tokens": "16384,vllm=True",
+            "radix_mlp_threshold": 0.0,
+            "radix_mlp_enabled": False,
         }
 
 

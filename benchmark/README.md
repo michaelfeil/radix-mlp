@@ -305,3 +305,12 @@ python simple_msmarco_embed.py --ports 3000,3001
 # New equivalent command
 python simple_msmarco_embed.py --model qwen3 --export-latex
 ```
+
+# Serving commands:
+```
+docker run --runtime nvidia --gpus all -e CUDA_VISIBLE_DEVICES="2" -v ~/.cache/huggingface:/root/.cache/huggingface     --env "HF_TOKEN=$HF_TOKEN"     -p 8000:8000     --ipc=host     vllm/vllm-openai:latest michaelfeil/Qwen3-Embedding-0.6B-auto --served-model-name qwen3vllm
+```
+
+```
+text-embeddings-router --model-id Qwen/Qwen3-Embedding-0.6B --port 3000 --max-client-batch-size 512 --auto-truncate --max-batch-tokens 16384 --radix-mlp-threshold 0.95
+```
