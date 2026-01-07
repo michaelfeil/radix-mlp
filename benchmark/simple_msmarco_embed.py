@@ -359,7 +359,7 @@ def load_msmarco_passages(max_samples: Optional[int] = None) -> List[Dict[str, s
 
     # Load the document corpus using IRDS format
     dataset = load_dataset("microsoft/ms_marco", "v1.1")
-    validation = dataset["validation"]
+    validation = dataset["train"]
 
     rerank_documents = []
     for entry in validation:
@@ -386,14 +386,18 @@ def load_msmarco_passages(max_samples: Optional[int] = None) -> List[Dict[str, s
 def apply_qwen3_template(
     passage_data: List[Dict[str, str]],
     instruction: str | None = None,
+    swap_docs_queries: bool = False,
 ) -> List[str]:
     prefix = '<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
     suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
     def format_instruction(instruction, query, doc):
+        if swap_docs_queries:
+            # augmentation technique, swap query and document for different kind of benchmark.
+            query, doc = doc, query 
         if instruction is None:
-            instruction = "Given a web search query, retrieve relevant passages that answer the query"
-        output = f"{prefix}<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}{suffix}"
+            instruction = "<Instruct>: Given a web search query, retrieve relevant passages that answer the query"
+        output = f"{prefix}{instruction}\n<Query>: {query}\n<Document>: {doc}{suffix}"
         return output
 
     formatted_passages = []
@@ -968,6 +972,16 @@ def main():
         default="results",
         help="Base output directory (default: results)",
     )
+    parser.add_argument(
+        "--split",
+        default="validation",
+        help="MSMARCO split to load (default: validation), e.g., 'train', 'validation', 'test'",
+    )
+    parser.add_argument(
+        "--swap-docs-queries",
+        action="store_true",
+        help="Swap documents and queries in the MSMARCO dataset",
+    )
     args = parser.parse_args()
 
     # Parse plot formats
@@ -980,13 +994,13 @@ def main():
     latex_dir = os.path.join(model_dir, "latex")
 
     # Load query-passage pairs
-    passage_data = load_msmarco_passages(args.max_samples)
+    passage_data = load_msmarco_passages(args.max_samples, args.split)
     if not passage_data:
         print("No passage data loaded. Exiting.")
         return
 
     # Apply Qwen3 template
-    formatted_passages = apply_qwen3_template(passage_data, args.prefix)
+    formatted_passages = apply_qwen3_template(passage_data, args.prefix, swap_docs_queries=args.swap_docs_queries)
     print(f"Applied Qwen3 template to {len(formatted_passages)} passages")
 
     # Show example
