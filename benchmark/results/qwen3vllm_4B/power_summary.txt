@@ -1,0 +1,93 @@
+CUDA Device Power Consumption Summary
+==================================================
+
+Device: vllm
+------------------------------
+Power Draw (W):
+  Mean: 446.84
+  Std:  259.33
+  Min:  110.78
+  Max:  660.12
+  P50:  646.05
+  P90:  653.40
+  P95:  654.79
+Temperature (°C):
+  Mean: 48.2
+  Max:  61.0
+GPU Utilization (%):
+  Mean: 59.1
+  Max:  97.0
+VRAM Usage (GB):
+  Mean: 18.05
+  Max:  18.05
+Graphics Clock (MHz):
+  Mean: 1948
+  Min:  1860
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 1600
+  Recording duration: 319.9s
+
+Device: radixmlp_disabled
+------------------------------
+Power Draw (W):
+  Mean: 617.77
+  Std:  116.41
+  Min:  110.28
+  Max:  672.36
+  P50:  652.46
+  P90:  661.57
+  P95:  663.56
+Temperature (°C):
+  Mean: 57.5
+  Max:  61.0
+GPU Utilization (%):
+  Mean: 92.8
+  Max:  100.0
+VRAM Usage (GB):
+  Mean: 10.80
+  Max:  10.94
+Graphics Clock (MHz):
+  Mean: 1947
+  Min:  1845
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 1600
+  Recording duration: 319.9s
+
+Device: radixmlp_enabled
+------------------------------
+Power Draw (W):
+  Mean: 434.03
+  Std:  249.30
+  Min:  107.95
+  Max:  662.99
+  P50:  622.00
+  P90:  645.83
+  P95:  648.74
+Temperature (°C):
+  Mean: 48.0
+  Max:  61.0
+GPU Utilization (%):
+  Mean: 60.6
+  Max:  100.0
+VRAM Usage (GB):
+  Mean: 9.71
+  Max:  10.51
+Graphics Clock (MHz):
+  Mean: 1967
+  Min:  1860
+  Max:  1980
+Memory Clock (MHz):
+  Mean: 2619
+  Min:  2619
+  Max:  2619
+  Total readings: 1600
+  Recording duration: 319.9s
+

@@ -353,13 +353,13 @@ class ConfigurationResult:
     error_message: Optional[str] = None
 
 
-def load_msmarco_passages(max_samples: Optional[int] = None) -> List[Dict[str, str]]:
+def load_msmarco_passages(split: str, max_samples: Optional[int] = None) -> List[Dict[str, str]]:
     """Load MSMARCO query-passage pairs from validation set."""
     print("Loading MSMARCO query-passage pairs...")
 
     # Load the document corpus using IRDS format
     dataset = load_dataset("microsoft/ms_marco", "v1.1")
-    validation = dataset["train"]
+    validation = dataset[split]
 
     rerank_documents = []
     for entry in validation:
@@ -994,7 +994,7 @@ def main():
     latex_dir = os.path.join(model_dir, "latex")
 
     # Load query-passage pairs
-    passage_data = load_msmarco_passages(args.max_samples, args.split)
+    passage_data = load_msmarco_passages(args.split, args.max_samples)
     if not passage_data:
         print("No passage data loaded. Exiting.")
         return

@@ -51,8 +51,8 @@ class PowerReading:
     device_name: str
     power_draw_w: float
     temperature_c: float
-    memory_usage_mb: float
-    memory_total_mb: float
+    memory_usage_gb: float
+    memory_total_gb: float
     utilization_pct: float
     graphics_clock_mhz: float
     memory_clock_mhz: float
@@ -143,14 +143,14 @@ class PowerRecorder:
             except pynvml.NVMLError:
                 temp_c = 0.0
 
-            # Memory usage
+            # Memory usage (in GB)
             try:
                 memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                memory_usage_mb = memory_info.used / (1024 * 1024)
-                memory_total_mb = memory_info.total / (1024 * 1024)
+                memory_usage_gb = memory_info.used / (1024 * 1024 * 1024)
+                memory_total_gb = memory_info.total / (1024 * 1024 * 1024)
             except pynvml.NVMLError:
-                memory_usage_mb = 0.0
-                memory_total_mb = 0.0
+                memory_usage_gb = 0.0
+                memory_total_gb = 0.0
 
             # GPU utilization
             try:
@@ -180,8 +180,8 @@ class PowerRecorder:
                 device_name=self.device_names[self.device_ids.index(device_id)],
                 power_draw_w=power_draw_w,
                 temperature_c=temp_c,
-                memory_usage_mb=memory_usage_mb,
-                memory_total_mb=memory_total_mb,
+                memory_usage_gb=memory_usage_gb,
+                memory_total_gb=memory_total_gb,
                 utilization_pct=utilization_pct,
                 graphics_clock_mhz=graphics_clock_mhz,
                 memory_clock_mhz=memory_clock_mhz,
@@ -205,8 +205,8 @@ class PowerRecorder:
                 "device_name",
                 "power_draw_w",
                 "temperature_c",
-                "memory_usage_mb",
-                "memory_total_mb",
+                "memory_usage_gb",
+                "memory_total_gb",
                 "utilization_pct",
                 "graphics_clock_mhz",
                 "memory_clock_mhz",
@@ -245,8 +245,8 @@ class PowerRecorder:
                             reading.device_name,
                             f"{reading.power_draw_w:.2f}",
                             f"{reading.temperature_c:.1f}",
-                            f"{reading.memory_usage_mb:.0f}",
-                            f"{reading.memory_total_mb:.0f}",
+                            f"{reading.memory_usage_gb:.2f}",
+                            f"{reading.memory_total_gb:.1f}",
                             f"{reading.utilization_pct:.1f}",
                             f"{reading.graphics_clock_mhz:.0f}",
                             f"{reading.memory_clock_mhz:.0f}",
@@ -344,6 +344,8 @@ class PowerRecorder:
                         "device_name": reading.device_name,
                         "power_draw_w": reading.power_draw_w,
                         "temperature_c": reading.temperature_c,
+                        "memory_usage_gb": reading.memory_usage_gb,
+                        "memory_total_gb": reading.memory_total_gb,
                         "utilization_pct": reading.utilization_pct,
                         "graphics_clock_mhz": reading.graphics_clock_mhz,
                         "memory_clock_mhz": reading.memory_clock_mhz,
@@ -352,17 +354,19 @@ class PowerRecorder:
 
             df = pd.DataFrame(data)
 
-            # Set up plotting style
-            sns.set_style("whitegrid")
+            # Convert to relative time from start
+            start_time = df["timestamp"].min()
+            df["relative_time"] = (df["timestamp"] - start_time).dt.total_seconds()
 
             # Create side-by-side plots: Power & Frequency over time
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8), sharex=True)
+            sns.set_style("whitegrid")
 
             # Plot 1: Power over time (left)
             for device_name in df["device_name"].unique():
                 device_data = df[df["device_name"] == device_name]
                 ax1.plot(
-                    device_data["timestamp"],
+                    device_data["relative_time"],
                     device_data["power_draw_w"],
                     label=device_name,
                     linewidth=2,
@@ -372,21 +376,20 @@ class PowerRecorder:
             ax1.set_title("Time vs Power Draw", fontsize=14)
             ax1.legend()
             ax1.grid(True, alpha=0.3)
-            ax1.set_xlabel("Time", fontsize=12)
-            ax1.tick_params(axis="x", rotation=45)
+            ax1.set_xlabel("Time (seconds)", fontsize=12)
 
             # Plot 2: GPU Clock Frequency over time (right)
             for device_name in df["device_name"].unique():
                 device_data = df[df["device_name"] == device_name]
                 ax2.plot(
-                    device_data["timestamp"],
+                    device_data["relative_time"],
                     device_data["graphics_clock_mhz"],
                     label=f"{device_name} (Graphics)",
                     linewidth=2,
                     linestyle="-",
                 )
                 ax2.plot(
-                    device_data["timestamp"],
+                    device_data["relative_time"],
                     device_data["memory_clock_mhz"],
                     label=f"{device_name} (Memory)",
                     linewidth=2,
@@ -397,16 +400,15 @@ class PowerRecorder:
             ax2.set_title("Time vs Clock Frequency", fontsize=14)
             ax2.legend()
             ax2.grid(True, alpha=0.3)
-            ax2.set_xlabel("Time", fontsize=12)
-            ax2.tick_params(axis="x", rotation=45)
+            ax2.set_xlabel("Time (seconds)", fontsize=12)
 
             # Adjust layout and save
             plt.subplots_adjust(wspace=0.3)
             plt.tight_layout()
 
             # Save dual plot
-            plot_file = os.path.join(output_dir, "power_frequency.png")
-            plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+            plot_file = os.path.join(output_dir, "power_frequency.pdf")
+            plt.savefig(plot_file, format="pdf", bbox_inches="tight")
             plt.close()
 
             print(f"Power & Frequency plot saved to {plot_file}")
@@ -426,27 +428,38 @@ class PowerRecorder:
     def create_detailed_plots(self, df: pd.DataFrame, output_dir: str):
         """Create additional detailed plots for comprehensive analysis."""
         try:
-            # Plot 1: Temperature and Utilization
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 8), sharex=True)
+            # Plot 1: Temperature, GPU Utilization and VRAM Usage
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 12), sharex=True)
+            sns.set_style("whitegrid")
 
             for device_name in df["device_name"].unique():
                 device_data = df[df["device_name"] == device_name]
 
                 # Temperature plot
                 ax1.plot(
-                    device_data["timestamp"],
+                    device_data["relative_time"],
                     device_data["temperature_c"],
                     label=device_name,
                     linewidth=2,
                 )
 
-                # Utilization plot
+                # GPU Utilization plot
                 ax2.plot(
-                    device_data["timestamp"],
+                    device_data["relative_time"],
                     device_data["utilization_pct"],
                     label=device_name,
                     linewidth=2,
                 )
+
+                # VRAM Usage plot
+                ax3.plot(
+                    device_data["relative_time"],
+                    device_data["memory_usage_gb"],
+                    label=device_name,
+                    linewidth=2,
+                )
+                # Add horizontal line for max VRAM
+                max_vram = device_data["memory_total_gb"].iloc[0]
 
             ax1.set_ylabel("Temperature (°C)", fontsize=12)
             ax1.set_title("CUDA Device Temperature Over Time", fontsize=14)
@@ -454,20 +467,25 @@ class PowerRecorder:
             ax1.grid(True, alpha=0.3)
 
             ax2.set_ylabel("GPU Utilization (%)", fontsize=12)
-            ax2.set_title("CUDA Device Utilization Over Time", fontsize=14)
+            ax2.set_title("CUDA Device GPU Utilization Over Time", fontsize=14)
             ax2.legend()
             ax2.grid(True, alpha=0.3)
 
-            plt.xlabel("Time", fontsize=12)
-            plt.xticks(rotation=45)
+            ax3.set_ylabel("VRAM Usage (GB)", fontsize=12)
+            ax3.set_title("CUDA Device VRAM Usage Over Time", fontsize=14)
+            ax3.legend()
+            ax3.grid(True, alpha=0.3)
+
+            plt.xlabel("Time (seconds)", fontsize=12)
             plt.tight_layout()
 
-            temp_plot_file = os.path.join(output_dir, "temperature_utilization.png")
-            plt.savefig(temp_plot_file, dpi=300, bbox_inches="tight")
+            temp_plot_file = os.path.join(output_dir, "temperature_utilization.pdf")
+            plt.savefig(temp_plot_file, format="pdf", bbox_inches="tight")
             plt.close()
 
-            # Plot 2: Power vs Clock Frequency Scatter Plot
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+            # Plot 2: Power vs Clock Frequency and VRAM Usage Scatter Plot
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(18, 12))
+            sns.set_style("whitegrid")
 
             for device_name in df["device_name"].unique():
                 device_data = df[df["device_name"] == device_name]
@@ -490,6 +508,25 @@ class PowerRecorder:
                     s=20,
                 )
 
+                # Power vs GPU Utilization
+                ax3.scatter(
+                    device_data["utilization_pct"],
+                    device_data["power_draw_w"],
+                    label=device_name,
+                    alpha=0.6,
+                    s=20,
+                )
+
+                # Power vs VRAM Usage
+                ax4.scatter(
+                    device_data["memory_usage_gb"],
+                    device_data["power_draw_w"],
+                    label=device_name,
+                    alpha=0.6,
+                    s=20,
+                )
+
+            # Configure subplots
             ax1.set_xlabel("Graphics Clock (MHz)", fontsize=12)
             ax1.set_ylabel("Power Draw (W)", fontsize=12)
             ax1.set_title("Power vs Graphics Clock", fontsize=14)
@@ -502,15 +539,27 @@ class PowerRecorder:
             ax2.legend()
             ax2.grid(True, alpha=0.3)
 
+            ax3.set_xlabel("GPU Utilization (%)", fontsize=12)
+            ax3.set_ylabel("Power Draw (W)", fontsize=12)
+            ax3.set_title("Power vs GPU Utilization", fontsize=14)
+            ax3.legend()
+            ax3.grid(True, alpha=0.3)
+
+            ax4.set_xlabel("VRAM Usage (GB)", fontsize=12)
+            ax4.set_ylabel("Power Draw (W)", fontsize=12)
+            ax4.set_title("Power vs VRAM Usage", fontsize=14)
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
             plt.tight_layout()
 
-            scatter_plot_file = os.path.join(output_dir, "power_clock_scatter.png")
-            plt.savefig(scatter_plot_file, dpi=300, bbox_inches="tight")
+            scatter_plot_file = os.path.join(output_dir, "power_clock_scatter.pdf")
+            plt.savefig(scatter_plot_file, format="pdf", bbox_inches="tight")
             plt.close()
 
             print(f"Detailed plots saved:")
             print(f"  - Temperature & Utilization: {temp_plot_file}")
-            print(f"  - Power vs Clock Scatter: {scatter_plot_file}")
+            print(f"  - Power vs Metrics Scatter: {scatter_plot_file}")
 
         except Exception as e:
             print(f"Error creating detailed plots: {e}")
@@ -553,11 +602,17 @@ class PowerRecorder:
                     f.write(f"  Mean: {temp_stats['mean']:.1f}\n")
                     f.write(f"  Max:  {temp_stats['max']:.1f}\n")
 
-                    # Utilization statistics
+                    # GPU Utilization statistics
                     util_stats = device_data["utilization_pct"].describe()
                     f.write(f"GPU Utilization (%):\n")
                     f.write(f"  Mean: {util_stats['mean']:.1f}\n")
                     f.write(f"  Max:  {util_stats['max']:.1f}\n")
+
+                    # VRAM Usage statistics
+                    vram_stats = device_data["memory_usage_gb"].describe()
+                    f.write(f"VRAM Usage (GB):\n")
+                    f.write(f"  Mean: {vram_stats['mean']:.2f}\n")
+                    f.write(f"  Max:  {vram_stats['max']:.2f}\n")
 
                     # Graphics Clock statistics
                     graphics_clock_stats = device_data["graphics_clock_mhz"].describe()
